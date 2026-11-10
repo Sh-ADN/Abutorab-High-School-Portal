@@ -1,0 +1,66 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: 'Hind Siliguri', 'Noto Sans Bengali', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --color-primary: #0f766e;
+    --color-primary-dark: #0d5c56;
+    --color-primary-light: #14b8a6;
+    --color-emerald: #10b981;
+    --color-amber: #f59e0b;
+    --bg-surface-light: #f8fafc;
+    --bg-surface-dark: #0f172a;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-[#f8fafc] text-slate-900 dark:bg-[#0f172a] dark:text-slate-100 transition-colors duration-150;
+    font-family: var(--font-sans);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.glass-surface {
+  @apply backdrop-blur-md bg-white/85 dark:bg-slate-900/85;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .marksheet-print-card {
+    box-shadow: none !important;
+    border-color: #0f172a !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+

@@ -1,0 +1,556 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Teacher or Administrator account registered via Google Sign-In.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID or teacher record identifier."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Full display name of the teacher or admin."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "format": "email",
+          "description": "Google account email address."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Profile avatar URL."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "teacher"],
+          "description": "System access role."
+        },
+        "teacherCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12,
+          "description": "Short teacher initials code (e.g., AD, MR, SK)."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "inactive"],
+          "description": "Account activation status."
+        },
+        "designation": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Academic designation (e.g., Senior Teacher, Headmaster)."
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO timestamp of last update."
+        }
+      },
+      "required": ["uid", "name", "email", "photoURL", "role", "teacherCode", "status", "designation", "createdAt", "updatedAt"]
+    },
+    "AcademicYear": {
+      "title": "AcademicYear",
+      "description": "Academic session year configuration (e.g., 2026).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "year": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "isActive": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "year", "label", "isActive", "createdAt"]
+    },
+    "ExamTerm": {
+      "title": "ExamTerm",
+      "description": "Examination term within an academic year (Half-Yearly, Annual Exam, Class Test).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "academicYearId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "termType": {
+          "type": "string",
+          "enum": ["Half-Yearly", "Annual Exam", "Class Test", "Pre-Test", "Test Exam"]
+        },
+        "totalMarksDefault": {
+          "type": "number"
+        },
+        "isActive": {
+          "type": "boolean"
+        },
+        "isLocked": {
+          "type": "boolean",
+          "description": "Whether exam mark entry is locked for teachers after the submission deadline."
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "academicYearId", "name", "termType", "totalMarksDefault", "isActive", "createdAt"]
+    },
+    "ClassSection": {
+      "title": "ClassSection",
+      "description": "Class and Section unit (Class 6 to Class 10, Section A/B or Ka/Kha) with assigned Class Teacher.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "academicYearId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "className": {
+          "type": "string",
+          "enum": ["Class 6", "Class 7", "Class 8", "Class 9", "Class 10"]
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "classTeacherUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "classTeacherName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "classTeacherCode": {
+          "type": "string",
+          "maxLength": 12
+        },
+        "roomNumber": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "academicYearId", "className", "section", "classTeacherUid", "classTeacherName", "classTeacherCode", "roomNumber", "createdAt"]
+    },
+    "SubjectAssignment": {
+      "title": "SubjectAssignment",
+      "description": "Maps a specific Subject in a Class & Section to a Teacher with Marks Entry permission.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "academicYearId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "classSectionId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "className": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "section": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "subjectCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "subjectName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "teacherUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "teacherName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "teacherCode": {
+          "type": "string",
+          "maxLength": 12
+        },
+        "maxMarks": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "academicYearId", "classSectionId", "className", "section", "subjectCode", "subjectName", "teacherUid", "teacherName", "teacherCode", "maxMarks", "createdAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student enrolled in a specific Class & Section in the Master Student Roster.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "academicYearId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "classSectionId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "className": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "section": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "roll": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "group": {
+          "type": "string",
+          "enum": ["General", "Science", "Humanities", "Business Studies"]
+        },
+        "optionalSubject": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "guardianPhone": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "transferred", "inactive"]
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "academicYearId", "classSectionId", "className", "section", "roll", "name", "group", "optionalSubject", "guardianPhone", "status", "createdAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily class attendance summary recorded by the assigned Class Teacher or Admin.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "classSectionId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 16
+        },
+        "markedByUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "presentCount": {
+          "type": "number"
+        },
+        "absentCount": {
+          "type": "number"
+        },
+        "absentRolls": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "classSectionId", "date", "markedByUid", "presentCount", "absentCount", "absentRolls", "updatedAt"]
+    },
+    "SubjectMarkRecord": {
+      "title": "SubjectMarkRecord",
+      "description": "Student exam marks entry recorded by the assigned Subject Teacher or Admin.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "assignmentId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "termId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "classSectionId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "roll": {
+          "type": "number"
+        },
+        "studentName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "writtenMarks": {
+          "type": "number"
+        },
+        "mcqMarks": {
+          "type": "number"
+        },
+        "practicalMarks": {
+          "type": "number"
+        },
+        "totalMarks": {
+          "type": "number"
+        },
+        "letterGrade": {
+          "type": "string",
+          "maxLength": 8
+        },
+        "gpa": {
+          "type": "number"
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "assignmentId", "termId", "classSectionId", "studentId", "roll", "studentName", "writtenMarks", "mcqMarks", "practicalMarks", "totalMarks", "letterGrade", "gpa", "updatedByUid", "updatedAt"]
+    },
+    "RoutineRecord": {
+      "title": "RoutineRecord",
+      "description": "Class schedule entry mapping days, class/section, period, subject, and teacher initials.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "days": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "className": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "period": {
+          "type": "number"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "teacher": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "days", "className", "period", "subject", "teacher", "updatedAt"]
+    },
+    "NoticeRecord": {
+      "title": "NoticeRecord",
+      "description": "Official school notice published on the Abutorab High School Notice Board.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "isImportant": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "publishedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      },
+      "required": ["id", "title", "date", "category", "isImportant", "summary", "content", "publishedBy", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Registered teacher and admin profiles."
+    },
+    "/academicYears/{yearId}": {
+      "schema": "AcademicYear",
+      "description": "Academic years configured by school admins."
+    },
+    "/examTerms/{termId}": {
+      "schema": "ExamTerm",
+      "description": "Examination terms configured by school admins."
+    },
+    "/classSections/{classSectionId}": {
+      "schema": "ClassSection",
+      "description": "Classes and sections with assigned Class Teacher."
+    },
+    "/classes/{classId}": {
+      "schema": "ClassSection",
+      "description": "Classes collection alias with assigned Class Teacher."
+    },
+    "/subjectAssignments/{assignmentId}": {
+      "schema": "SubjectAssignment",
+      "description": "Subject teacher assignments per class and section."
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Master student roster entries."
+    },
+    "/attendanceRecords/{recordId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daily attendance records per class and section."
+    },
+    "/attendance/{recordId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daily attendance collection alias per class and section."
+    },
+    "/subjectMarks/{markId}": {
+      "schema": "SubjectMarkRecord",
+      "description": "Subject exam mark sheets entered by subject teachers or admins."
+    },
+    "/marks/{markId}": {
+      "schema": "SubjectMarkRecord",
+      "description": "Subject exam marks collection alias entered by subject teachers or admins."
+    },
+    "/routineEntries/{entryId}": {
+      "schema": "RoutineRecord",
+      "description": "School routine entries synced from routine.json or live Google Apps Script."
+    },
+    "/notices/{noticeId}": {
+      "schema": "NoticeRecord",
+      "description": "Official school notices published by admins."
+    }
+  }
+}

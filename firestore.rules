@@ -1,0 +1,450 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Reusable Primitives & Role Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'ananneyadebnath@gmail.com';
+    }
+
+    // True only when the user has role == 'admin' (or is the bootstrapped Super Admin)
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active'
+      );
+    }
+
+    function isActiveTeacherOrAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active'
+      );
+    }
+
+    // Checks whether request.auth.uid is the assigned classTeacherUid for a given classSectionId
+    function isAssignedClassTeacherFor(classSectionId) {
+      return isVerifiedUser() && (
+        (
+          exists(/databases/$(database)/documents/classSections/$(classSectionId)) &&
+          get(/databases/$(database)/documents/classSections/$(classSectionId)).data.classTeacherUid == request.auth.uid
+        ) || (
+          exists(/databases/$(database)/documents/classes/$(classSectionId)) &&
+          get(/databases/$(database)/documents/classes/$(classSectionId)).data.classTeacherUid == request.auth.uid
+        )
+      );
+    }
+
+    // Checks whether request.auth.uid is the assigned teacherUid for a given subjectAssignmentId
+    function isAssignedSubjectTeacherFor(assignmentId) {
+      return isVerifiedUser() &&
+        exists(/databases/$(database)/documents/subjectAssignments/$(assignmentId)) &&
+        get(/databases/$(database)/documents/subjectAssignments/$(assignmentId)).data.teacherUid == request.auth.uid;
+    }
+
+    function isTermUnlocked(termId) {
+      return !exists(/databases/$(database)/documents/examTerms/$(termId)) ||
+        !('isLocked' in get(/databases/$(database)/documents/examTerms/$(termId)).data) ||
+        get(/databases/$(database)/documents/examTerms/$(termId)).data.isLocked == false;
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'photoURL', 'role', 'teacherCode', 'status', 'designation', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'name', 'email', 'photoURL', 'role', 'teacherCode', 'status', 'designation', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.photoURL is string && data.photoURL.size() <= 500 &&
+        data.role is string && (data.role == 'admin' || data.role == 'teacher') &&
+        data.teacherCode is string && data.teacherCode.size() >= 1 && data.teacherCode.size() <= 12 &&
+        data.status is string && (data.status == 'active' || data.status == 'inactive') &&
+        data.designation is string && data.designation.size() <= 80 &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40;
+    }
+
+    function isValidAcademicYear(data) {
+      return data.keys().hasAll(['id', 'year', 'label', 'isActive', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'year', 'label', 'isActive', 'createdAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.year is string && data.year.size() >= 4 && data.year.size() <= 16 &&
+        data.label is string && data.label.size() >= 1 && data.label.size() <= 80 &&
+        data.isActive is bool &&
+        data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidExamTerm(data) {
+      return data.keys().hasAll(['id', 'academicYearId', 'name', 'termType', 'totalMarksDefault', 'isActive', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'academicYearId', 'name', 'termType', 'totalMarksDefault', 'isActive', 'isLocked', 'createdAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.academicYearId is string && data.academicYearId.size() >= 1 && data.academicYearId.size() <= 64 && data.academicYearId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.termType is string && (
+          data.termType == 'Half-Yearly' ||
+          data.termType == 'Annual Exam' ||
+          data.termType == 'Class Test' ||
+          data.termType == 'Pre-Test' ||
+          data.termType == 'Test Exam'
+        ) &&
+        data.totalMarksDefault is number && data.totalMarksDefault >= 1 && data.totalMarksDefault <= 200 &&
+        data.isActive is bool &&
+        (!('isLocked' in data) || data.isLocked is bool) &&
+        data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidClassSection(data) {
+      return data.keys().hasAll(['id', 'academicYearId', 'className', 'section', 'classTeacherUid', 'classTeacherName', 'classTeacherCode', 'roomNumber', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'academicYearId', 'className', 'section', 'classTeacherUid', 'classTeacherName', 'classTeacherCode', 'roomNumber', 'createdAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.academicYearId is string && data.academicYearId.size() >= 1 && data.academicYearId.size() <= 64 && data.academicYearId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.className is string && (
+          data.className == 'Class 6' ||
+          data.className == 'Class 7' ||
+          data.className == 'Class 8' ||
+          data.className == 'Class 9' ||
+          data.className == 'Class 10'
+        ) &&
+        data.section is string && data.section.size() >= 1 && data.section.size() <= 32 &&
+        data.classTeacherUid is string && data.classTeacherUid.size() <= 128 &&
+        data.classTeacherName is string && data.classTeacherName.size() <= 120 &&
+        data.classTeacherCode is string && data.classTeacherCode.size() <= 12 &&
+        data.roomNumber is string && data.roomNumber.size() <= 32 &&
+        data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidSubjectAssignment(data) {
+      return data.keys().hasAll(['id', 'academicYearId', 'classSectionId', 'className', 'section', 'subjectCode', 'subjectName', 'teacherUid', 'teacherName', 'teacherCode', 'maxMarks', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'academicYearId', 'classSectionId', 'className', 'section', 'subjectCode', 'subjectName', 'teacherUid', 'teacherName', 'teacherCode', 'maxMarks', 'createdAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.academicYearId is string && data.academicYearId.size() >= 1 && data.academicYearId.size() <= 64 && data.academicYearId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.classSectionId is string && data.classSectionId.size() >= 1 && data.classSectionId.size() <= 64 && data.classSectionId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.section is string && data.section.size() >= 1 && data.section.size() <= 32 &&
+        data.subjectCode is string && data.subjectCode.size() >= 1 && data.subjectCode.size() <= 24 &&
+        data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 100 &&
+        data.teacherUid is string && data.teacherUid.size() <= 128 &&
+        data.teacherName is string && data.teacherName.size() <= 120 &&
+        data.teacherCode is string && data.teacherCode.size() <= 12 &&
+        data.maxMarks is number && data.maxMarks >= 1 && data.maxMarks <= 200 &&
+        data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['id', 'academicYearId', 'classSectionId', 'className', 'section', 'roll', 'name', 'group', 'optionalSubject', 'guardianPhone', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'academicYearId', 'classSectionId', 'className', 'section', 'roll', 'name', 'group', 'optionalSubject', 'guardianPhone', 'status', 'createdAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.academicYearId is string && data.academicYearId.size() >= 1 && data.academicYearId.size() <= 64 && data.academicYearId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.classSectionId is string && data.classSectionId.size() >= 1 && data.classSectionId.size() <= 64 && data.classSectionId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.section is string && data.section.size() >= 1 && data.section.size() <= 32 &&
+        data.roll is number && data.roll >= 1 && data.roll <= 9999 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.group is string && (
+          data.group == 'General' ||
+          data.group == 'Science' ||
+          data.group == 'Humanities' ||
+          data.group == 'Business Studies'
+        ) &&
+        data.optionalSubject is string && data.optionalSubject.size() <= 100 &&
+        data.guardianPhone is string && data.guardianPhone.size() <= 32 &&
+        data.status is string && (
+          data.status == 'active' ||
+          data.status == 'transferred' ||
+          data.status == 'inactive'
+        ) &&
+        data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    function isValidAttendanceRecord(data) {
+      return data.keys().hasAll(['id', 'classSectionId', 'date', 'markedByUid', 'presentCount', 'absentCount', 'absentRolls', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'classSectionId', 'date', 'markedByUid', 'presentCount', 'absentCount', 'absentRolls', 'updatedAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.classSectionId is string && data.classSectionId.size() >= 1 && data.classSectionId.size() <= 64 && data.classSectionId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 16 &&
+        data.markedByUid is string && data.markedByUid.size() >= 1 && data.markedByUid.size() <= 128 &&
+        data.presentCount is number && data.presentCount >= 0 && data.presentCount <= 1000 &&
+        data.absentCount is number && data.absentCount >= 0 && data.absentCount <= 1000 &&
+        data.absentRolls is string && data.absentRolls.size() <= 1000 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40;
+    }
+
+    function isValidSubjectMarkRecord(data) {
+      return data.keys().hasAll(['id', 'assignmentId', 'termId', 'classSectionId', 'studentId', 'roll', 'studentName', 'writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'assignmentId', 'termId', 'classSectionId', 'studentId', 'roll', 'studentName', 'writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.assignmentId is string && data.assignmentId.size() >= 1 && data.assignmentId.size() <= 64 && data.assignmentId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.termId is string && data.termId.size() >= 1 && data.termId.size() <= 64 && data.termId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.classSectionId is string && data.classSectionId.size() >= 1 && data.classSectionId.size() <= 64 && data.classSectionId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 64 && data.studentId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.roll is number && data.roll >= 1 && data.roll <= 9999 &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120 &&
+        data.writtenMarks is number && data.writtenMarks >= 0 && data.writtenMarks <= 200 &&
+        data.mcqMarks is number && data.mcqMarks >= 0 && data.mcqMarks <= 200 &&
+        data.practicalMarks is number && data.practicalMarks >= 0 && data.practicalMarks <= 200 &&
+        data.totalMarks is number && data.totalMarks >= 0 && data.totalMarks <= 200 &&
+        data.letterGrade is string && data.letterGrade.size() >= 1 && data.letterGrade.size() <= 8 &&
+        data.gpa is number && data.gpa >= 0 && data.gpa <= 5 &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40;
+    }
+
+    function isValidRoutineRecord(data) {
+      return data.keys().hasAll(['id', 'days', 'className', 'period', 'subject', 'teacher', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'days', 'className', 'period', 'subject', 'teacher', 'updatedAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.days is string && data.days.size() >= 1 && data.days.size() <= 32 &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.period is number && data.period >= 1 && data.period <= 10 &&
+        data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 80 &&
+        data.teacher is string && data.teacher.size() >= 1 && data.teacher.size() <= 32 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40;
+    }
+
+    function isValidNoticeRecord(data) {
+      return data.keys().hasAll(['id', 'title', 'date', 'category', 'isImportant', 'summary', 'content', 'publishedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'title', 'date', 'category', 'isImportant', 'summary', 'content', 'publishedBy', 'updatedAt']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.date is string && data.date.size() >= 1 && data.date.size() <= 40 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
+        data.isImportant is bool &&
+        data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 400 &&
+        data.content is string && data.content.size() >= 1 && data.content.size() <= 3000 &&
+        data.publishedBy is string && data.publishedBy.size() >= 1 && data.publishedBy.size() <= 120 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40;
+    }
+
+    // Connection test probe
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // 4. Collection Rules
+
+    // USERS: Only users with role == 'admin' (isAdmin()) can modify (update/delete) users.
+    // On first sign-in, a verified user can create their own profile (or admin can create any user).
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && (request.auth.uid == userId || isActiveTeacherOrAdmin());
+      allow list: if isVerifiedUser() && (existing().status == 'active' || isAdmin());
+      allow create: if isVerifiedUser() && isValidId(userId) && isValidUserProfile(incoming()) && incoming().uid == userId && (
+        isAdmin() || (
+          request.auth.uid == userId &&
+          incoming().email == request.auth.token.email &&
+          incoming().status == 'active' &&
+          (
+            (isBootstrappedAdmin() && incoming().role == 'admin') ||
+            incoming().role == 'teacher'
+          )
+        )
+      );
+      allow update: if isVerifiedUser() && isValidId(userId) && isValidUserProfile(incoming()) && incoming().uid == existing().uid && isAdmin();
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // ACADEMIC YEARS: Only role == 'admin' can modify
+    match /academicYears/{yearId} {
+      allow get: if isVerifiedUser() && isValidId(yearId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().isActive == true || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(yearId) && isValidAcademicYear(incoming()) && incoming().id == yearId && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(yearId) && isValidAcademicYear(incoming()) && incoming().id == existing().id && isAdmin();
+      allow delete: if isValidId(yearId) && isAdmin();
+    }
+
+    // EXAM TERMS: Only role == 'admin' can modify
+    match /examTerms/{termId} {
+      allow get: if isVerifiedUser() && isValidId(termId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().isActive == true || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(termId) && isValidExamTerm(incoming()) && incoming().id == termId && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(termId) && isValidExamTerm(incoming()) && incoming().id == existing().id && isAdmin();
+      allow delete: if isValidId(termId) && isAdmin();
+    }
+
+    // CLASSES (/classSections and /classes): Only users with role == 'admin' can modify
+    match /classSections/{classSectionId} {
+      allow get: if isVerifiedUser() && isValidId(classSectionId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().classTeacherUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(classSectionId) && isValidClassSection(incoming()) && incoming().id == classSectionId && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(classSectionId) && isValidClassSection(incoming()) && incoming().id == existing().id && isAdmin();
+      allow delete: if isValidId(classSectionId) && isAdmin();
+    }
+
+    match /classes/{classId} {
+      allow get: if isVerifiedUser() && isValidId(classId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().classTeacherUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(classId) && isValidClassSection(incoming()) && incoming().id == classId && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(classId) && isValidClassSection(incoming()) && incoming().id == existing().id && isAdmin();
+      allow delete: if isValidId(classId) && isAdmin();
+    }
+
+    // SUBJECT ASSIGNMENTS: Only users with role == 'admin' can modify
+    match /subjectAssignments/{assignmentId} {
+      allow get: if isVerifiedUser() && isValidId(assignmentId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().teacherUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(assignmentId) && isValidSubjectAssignment(incoming()) && incoming().id == assignmentId && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(assignmentId) && isValidSubjectAssignment(incoming()) && incoming().id == existing().id && isAdmin();
+      allow delete: if isValidId(assignmentId) && isAdmin();
+    }
+
+    // STUDENTS: Only Admin or assigned classTeacherUid for that class can modify
+    match /students/{studentId} {
+      allow get: if isVerifiedUser() && isValidId(studentId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().status == 'active' || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(studentId) && isValidStudent(incoming()) && incoming().id == studentId && (
+        isAdmin() || isAssignedClassTeacherFor(incoming().classSectionId)
+      );
+      allow update: if isVerifiedUser() && isValidId(studentId) && isValidStudent(incoming()) && incoming().id == existing().id && (
+        isAdmin() || (
+          incoming().classSectionId == existing().classSectionId &&
+          isAssignedClassTeacherFor(incoming().classSectionId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['roll', 'name', 'group', 'optionalSubject', 'guardianPhone', 'status'])
+        )
+      );
+      allow delete: if isValidId(studentId) && (
+        isAdmin() || isAssignedClassTeacherFor(existing().classSectionId)
+      );
+    }
+
+    // ATTENDANCE (/attendanceRecords and /attendance): Only the assigned classTeacherUid or admin can write to attendance for their class
+    match /attendanceRecords/{recordId} {
+      allow get: if isVerifiedUser() && isValidId(recordId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().markedByUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == recordId && incoming().markedByUid == request.auth.uid && (
+        isAdmin() || isAssignedClassTeacherFor(incoming().classSectionId)
+      );
+      allow update: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == existing().id && incoming().markedByUid == request.auth.uid && (
+        isAdmin() || (
+          incoming().classSectionId == existing().classSectionId &&
+          incoming().date == existing().date &&
+          isAssignedClassTeacherFor(incoming().classSectionId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['markedByUid', 'presentCount', 'absentCount', 'absentRolls', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(recordId) && (
+        isAdmin() || isAssignedClassTeacherFor(existing().classSectionId)
+      );
+    }
+
+    match /attendance/{recordId} {
+      allow get: if isVerifiedUser() && isValidId(recordId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().markedByUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == recordId && incoming().markedByUid == request.auth.uid && (
+        isAdmin() || isAssignedClassTeacherFor(incoming().classSectionId)
+      );
+      allow update: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == existing().id && incoming().markedByUid == request.auth.uid && (
+        isAdmin() || (
+          incoming().classSectionId == existing().classSectionId &&
+          incoming().date == existing().date &&
+          isAssignedClassTeacherFor(incoming().classSectionId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['markedByUid', 'presentCount', 'absentCount', 'absentRolls', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(recordId) && (
+        isAdmin() || isAssignedClassTeacherFor(existing().classSectionId)
+      );
+    }
+
+    // MARKS (/subjectMarks and /marks): Only the assigned teacherUid or admin can write to marks for their assigned subject
+    match /subjectMarks/{markId} {
+      allow get: if isVerifiedUser() && isValidId(markId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().updatedByUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == markId && incoming().updatedByUid == request.auth.uid && (
+        isAdmin() || (
+          isTermUnlocked(incoming().termId) &&
+          isAssignedSubjectTeacherFor(incoming().assignmentId)
+        )
+      );
+      allow update: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == existing().id && incoming().updatedByUid == request.auth.uid && (
+        isAdmin() || (
+          incoming().assignmentId == existing().assignmentId &&
+          incoming().termId == existing().termId &&
+          incoming().classSectionId == existing().classSectionId &&
+          incoming().studentId == existing().studentId &&
+          isTermUnlocked(incoming().termId) &&
+          isAssignedSubjectTeacherFor(incoming().assignmentId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(markId) && (
+        isAdmin() || (
+          isTermUnlocked(existing().termId) &&
+          isAssignedSubjectTeacherFor(existing().assignmentId)
+        )
+      );
+    }
+
+    match /marks/{markId} {
+      allow get: if isVerifiedUser() && isValidId(markId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().updatedByUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == markId && incoming().updatedByUid == request.auth.uid && (
+        isAdmin() || (
+          isTermUnlocked(incoming().termId) &&
+          isAssignedSubjectTeacherFor(incoming().assignmentId)
+        )
+      );
+      allow update: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == existing().id && incoming().updatedByUid == request.auth.uid && (
+        isAdmin() || (
+          incoming().assignmentId == existing().assignmentId &&
+          incoming().termId == existing().termId &&
+          incoming().classSectionId == existing().classSectionId &&
+          incoming().studentId == existing().studentId &&
+          isTermUnlocked(incoming().termId) &&
+          isAssignedSubjectTeacherFor(incoming().assignmentId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(markId) && (
+        isAdmin() || (
+          isTermUnlocked(existing().termId) &&
+          isAssignedSubjectTeacherFor(existing().assignmentId)
+        )
+      );
+    }
+
+    // ROUTINE ENTRIES: Only admin can modify
+    match /routineEntries/{entryId} {
+      allow get: if isVerifiedUser() && isValidId(entryId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().period >= 1 || isActiveTeacherOrAdmin());
+      allow create: if isVerifiedUser() && isValidId(entryId) && isValidRoutineRecord(incoming()) && incoming().id == entryId && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(entryId) && isValidRoutineRecord(incoming()) && incoming().id == existing().id && isAdmin();
+      allow delete: if isValidId(entryId) && isAdmin();
+    }
+
+    // NOTICES: Readable by authenticated teachers/admins and writable only by admin
+    match /notices/{noticeId} {
+      allow get: if isVerifiedUser() && isValidId(noticeId) && isActiveTeacherOrAdmin();
+      allow list: if isVerifiedUser() && (existing().isImportant == true || existing().isImportant == false);
+      allow create: if isVerifiedUser() && isValidId(noticeId) && isValidNoticeRecord(incoming()) && incoming().id == noticeId && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(noticeId) && isValidNoticeRecord(incoming()) && incoming().id == existing().id && isAdmin();
+      allow delete: if isValidId(noticeId) && isAdmin();
+    }
+  }
+}

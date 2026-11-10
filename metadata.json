@@ -1,0 +1,6 @@
+{
+  "name": "Abu Torab High School Portal",
+  "description": "Academic Management, Role-Based Administration, Class Teacher Attendance, Subject Matrix, and Master Student Roster Portal for Abu Torab High School (Est. 1914, Mirsarai, Chattogram).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
