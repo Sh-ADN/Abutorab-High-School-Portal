@@ -259,14 +259,14 @@ export const TeacherDashboard: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    আজকের ক্লাস (My Classes Today)
+                    আজকের ক্লাস
                   </h3>
                   <span className="px-2 py-0.5 text-[11px] font-mono font-bold rounded-md bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
                     {resolvedRoutineTeacherCode}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {selectedDayCfg.bengaliName} ({selectedDayCfg.name}) · মোট{' '}
+                  {selectedDayCfg.bengaliName} · মোট{' '}
                   <span className="font-semibold tabular-nums">{num(myClassesToday.length)}</span>টি
                   পিরিয়ড
                 </p>
@@ -380,7 +380,7 @@ export const TeacherDashboard: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  আজকের হাজিরা নিন (Take Attendance)
+                  আজকের হাজিরা
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
                   তারিখ: {num(todayIso)} · এক ট্যাপে দ্রুত উপস্থিতি গ্রহণ
@@ -425,11 +425,11 @@ export const TeacherDashboard: React.FC = () => {
                         {todayRecord ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
                             <CheckCircle2 className="w-3 h-3" />
-                            <span>সম্পন্ন (Submitted)</span>
+                            <span>সম্পন্ন</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950">
-                            বাকি আছে (Pending)
+                            বাকি আছে
                           </span>
                         )}
                       </div>
@@ -494,7 +494,7 @@ export const TeacherDashboard: React.FC = () => {
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                নম্বর এন্ট্রি করুন (Enter Exam Marks)
+                নম্বর এন্ট্রি
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 চলমান পরীক্ষা: <strong>{activeTerm?.name || 'Half-Yearly Exam'}</strong> · পূর্ণমান ও
@@ -564,7 +564,7 @@ export const TeacherDashboard: React.FC = () => {
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
-                          {num(enteredCount)}/{num(classStudentCount)} Students Graded
+                          {num(enteredCount)}/{num(classStudentCount)} মূল্যায়নকৃত
                         </span>
                         <span
                           className={`font-bold tabular-nums ${
@@ -591,7 +591,7 @@ export const TeacherDashboard: React.FC = () => {
                       onClick={() => handleOpenMarksForSubject(asg.id)}
                       className="w-full py-2.5 px-3.5 rounded-xl bg-teal-700 hover:bg-[#0d5c56] text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
                     >
-                      <span>নম্বর এন্ট্রি করুন (Open Marks Sheet)</span>
+                      <span>নম্বর এন্ট্রি করুন</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   </div>

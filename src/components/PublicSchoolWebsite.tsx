@@ -22,6 +22,8 @@ import {
   Moon,
   Phone,
   Plus,
+  Printer,
+  Search,
   ShieldCheck,
   Sparkles,
   Sun,
@@ -48,6 +50,12 @@ import {
 } from '../data/schoolWebsiteData';
 import { NoticeRecord } from '../types/school';
 import { formatNumeral } from '../utils/schoolLogic';
+import { MarksheetTranscriptView } from './MarksheetTranscriptView';
+import {
+  compileClassTabulationFromFirestore,
+  computeStudentAttendanceSummary,
+  StudentResult,
+} from '../utils/tabulationAndMeritEngine';
 
 interface PublicSchoolWebsiteProps {
   onOpenLoginModal?: () => void;
@@ -98,7 +106,10 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
     toggleTheme,
     students,
     examTerms,
+    classSections,
+    subjectAssignments,
     subjectMarks,
+    attendanceRecords,
     academicYears,
     notices,
     saveNotice,
@@ -123,6 +134,63 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
   const [selectedExamCardTermId, setSelectedExamCardTermId] = useState<string>(
     () => examTerms.find((t) => t.isActive)?.id || examTerms[0]?.id || 'term_2026_half'
   );
+
+  // Public Student Result Lookup State
+  const [lookupTermId, setLookupTermId] = useState<string>(
+    () => examTerms[0]?.id || 'term_2026_half'
+  );
+  const [lookupClassSectionId, setLookupClassSectionId] = useState<string>('');
+  const [lookupRoll, setLookupRoll] = useState<string>('');
+  const [lookupSearched, setLookupSearched] = useState(false);
+  const [lookupResult, setLookupResult] = useState<StudentResult | null>(null);
+  const [lookupAttendance, setLookupAttendance] = useState<{
+    workingDays: number;
+    presentDays: number;
+    absentDays: number;
+    attendancePercent: number;
+  } | null>(null);
+  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+
+  // Initialize lookupClassSectionId if not set
+  useEffect(() => {
+    if (!lookupClassSectionId && classSections.length > 0) {
+      setLookupClassSectionId(classSections[0].id);
+    }
+  }, [classSections, lookupClassSectionId]);
+
+  const selectedLookupTerm = useMemo(() => {
+    return examTerms.find((t) => t.id === lookupTermId) || examTerms[0];
+  }, [examTerms, lookupTermId]);
+
+  const selectedLookupClass = useMemo(() => {
+    return classSections.find((c) => c.id === lookupClassSectionId) || classSections[0];
+  }, [classSections, lookupClassSectionId]);
+
+  const handleSearchStudentResult = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lookupClassSectionId || !lookupTermId || !lookupRoll.trim()) return;
+
+    const rollNum = Number(lookupRoll.trim());
+    if (Number.isNaN(rollNum)) return;
+
+    const compiled = compileClassTabulationFromFirestore({
+      classSectionId: lookupClassSectionId,
+      termId: lookupTermId,
+      students,
+      subjectAssignments,
+      subjectMarks,
+    });
+
+    const found = compiled.results.find((r) => r.student.roll === rollNum);
+    setLookupResult(found || null);
+    if (found) {
+      const att = computeStudentAttendanceSummary(lookupClassSectionId, rollNum, attendanceRecords);
+      setLookupAttendance(att);
+    } else {
+      setLookupAttendance(null);
+    }
+    setLookupSearched(true);
+  };
 
   // Modals state
   const [activeNoticeModal, setActiveNoticeModal] = useState<NoticeRecord | null>(null);
@@ -902,6 +970,191 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Interactive Student Result Lookup Card */}
+        <div className="mt-8 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xs">
+          <div className="max-w-3xl mx-auto text-center space-y-2 mb-6">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-teal-50 dark:bg-teal-950/70 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+              <Award className="w-3.5 h-3.5" />
+              <span>অনলাইন শিক্ষার্থী ফলাফল ও মার্কশিট অনুসন্ধান</span>
+            </span>
+            <h3 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
+              আপনার ফলাফল ও অফিসিয়াল মার্কশিট খুঁজুন
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+              পরীক্ষার টার্ম, শ্রেণি ও রোল নম্বর নির্বাচন করে তাৎক্ষণিকভাবে ব্যক্তিগত ফলাফল ও ট্রান্সক্রিপ্ট দেখুন
+            </p>
+          </div>
+
+          <form
+            onSubmit={handleSearchStudentResult}
+            className="max-w-3xl mx-auto grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800"
+          >
+            <div>
+              <label
+                htmlFor="lookup-term-select"
+                className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+              >
+                পরীক্ষার টার্ম
+              </label>
+              <select
+                id="lookup-term-select"
+                value={lookupTermId}
+                onChange={(e) => {
+                  setLookupTermId(e.target.value);
+                  setLookupSearched(false);
+                }}
+                className="w-full text-xs font-medium rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2.5 focus:ring-1 focus:ring-teal-500"
+              >
+                {examTerms.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="lookup-class-select"
+                className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+              >
+                শ্রেণি ও শাখা
+              </label>
+              <select
+                id="lookup-class-select"
+                value={lookupClassSectionId}
+                onChange={(e) => {
+                  setLookupClassSectionId(e.target.value);
+                  setLookupSearched(false);
+                }}
+                className="w-full text-xs font-medium rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2.5 focus:ring-1 focus:ring-teal-500"
+              >
+                {classSections.map((cs) => (
+                  <option key={cs.id} value={cs.id}>
+                    {cs.className} - শাখা {cs.section}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="lookup-roll-input"
+                className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1"
+              >
+                রোল নম্বর
+              </label>
+              <input
+                id="lookup-roll-input"
+                type="number"
+                min="1"
+                placeholder="যেমন: ১"
+                value={lookupRoll}
+                onChange={(e) => {
+                  setLookupRoll(e.target.value);
+                  setLookupSearched(false);
+                }}
+                className="w-full text-xs font-medium rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-3 py-2.5 tabular-nums focus:ring-1 focus:ring-teal-500"
+              />
+            </div>
+
+            <div className="flex items-end">
+              <button
+                type="submit"
+                className="w-full py-2.5 px-4 rounded-xl bg-teal-700 hover:bg-[#0d5c56] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>ফলাফল খুঁজুন</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Search Result Display */}
+          {lookupSearched && (
+            <div className="max-w-3xl mx-auto mt-6">
+              {lookupResult ? (
+                <div className="rounded-2xl border border-teal-200 dark:border-teal-900/60 bg-teal-50/50 dark:bg-teal-950/20 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-teal-200/60 dark:border-teal-900/40 pb-4">
+                    <div>
+                      <span className="text-xs font-bold text-teal-800 dark:text-teal-300 uppercase tracking-wider">
+                        শিক্ষার্থী পরিচিতি
+                      </span>
+                      <h4 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
+                        {lookupResult.student.name}
+                      </h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-400">
+                        শ্রেণি: <strong>{selectedLookupClass?.className}</strong> · শাখা: <strong>{selectedLookupClass?.section}</strong> · রোল: <strong>#{num(lookupResult.student.roll)}</strong>
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowTranscriptModal(true)}
+                        className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-[#0d5c56] text-white font-bold text-xs flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
+                      >
+                        <FileText className="w-4 h-4" />
+                        <span>অফিসিয়াল মার্কশিট দেখুন</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center tabular-nums">
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block">মোট প্রাপ্ত নম্বর</span>
+                      <strong className="text-lg font-bold text-slate-900 dark:text-white">
+                        {num(lookupResult.grandTotal)}
+                      </strong>
+                    </div>
+
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block">লেটার গ্রেড</span>
+                      <strong
+                        className={`text-lg font-bold ${
+                          lookupResult.letterGrade === 'F'
+                            ? 'text-rose-600'
+                            : lookupResult.letterGrade === 'A+'
+                            ? 'text-emerald-600'
+                            : 'text-teal-700 dark:text-teal-400'
+                        }`}
+                      >
+                        {lookupResult.letterGrade}
+                      </strong>
+                    </div>
+
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block">জিপিএ (GPA)</span>
+                      <strong className="text-lg font-bold text-slate-900 dark:text-white">
+                        {lookupResult.gpa !== null ? num(lookupResult.gpa.toFixed(2)) : num('0.00')}
+                      </strong>
+                    </div>
+
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block">ফলাফল স্ট্যাটাস</span>
+                      <strong
+                        className={`text-lg font-bold ${
+                          lookupResult.letterGrade === 'F'
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : 'text-emerald-700 dark:text-emerald-400'
+                        }`}
+                      >
+                        {lookupResult.letterGrade === 'F' ? 'অকৃতকার্য' : 'উত্তীর্ণ'}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/60 dark:bg-rose-950/20 p-5 text-center text-xs text-rose-800 dark:text-rose-300">
+                  <p className="font-bold">উক্ত রোল নম্বরের কোনো ফলাফল পাওয়া যায়নি।</p>
+                  <p className="text-[11px] mt-1 text-slate-600 dark:text-slate-400">
+                    অনুগ্রহ করে টার্ম, শ্রেণি ও শাখা এবং রোল নম্বর সঠিক আছে কিনা পুনরায় পরীক্ষা করুন।
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
@@ -1767,7 +2020,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
                   শিক্ষক ও অ্যাডমিন পোর্টাল লগইন
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Google অ্যাকাউন্ট দিয়ে লগইন করুন অথবা কুইক রোল প্রিভিউ নির্বাচন করুন
+                  বিদ্যালয়ের নিবন্ধিত শিক্ষক ও অ্যাডমিনগণ অফিসিয়াল Google অ্যাকাউন্ট দিয়ে লগইন করুন
                 </p>
               </div>
               <button
@@ -1790,10 +2043,11 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
             )}
 
             <button
+              data-testid="btn-official-google-signin"
               type="button"
               onClick={handleGoogleSignInClick}
               disabled={isGoogleSigningIn}
-              className="w-full py-3 px-4 rounded-xl bg-teal-700 hover:bg-[#0d5c56] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2.5 shadow-sm transition-colors cursor-pointer"
+              className="w-full py-3.5 px-4 rounded-xl bg-teal-700 hover:bg-[#0d5c56] disabled:opacity-60 text-white font-bold text-sm flex items-center justify-center gap-2.5 shadow-sm transition-colors cursor-pointer"
             >
               <LogIn className="w-4 h-4 shrink-0" />
               <span>
@@ -1803,49 +2057,57 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
               </span>
             </button>
 
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
-              <span className="text-[11px] font-medium text-slate-400">
-                অথবা তাৎক্ষণিক পোর্টাল প্রিভিউ (ডেমো সেশন)
-              </span>
-              <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 p-3.5 text-xs text-slate-600 dark:text-slate-300 space-y-1.5">
+              <div className="flex items-center gap-1.5 font-bold text-teal-800 dark:text-teal-300">
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>স্বয়ংক্রিয় প্রোফাইল ও ইমেইল ম্যাচিং</span>
+              </div>
+              <p className="leading-relaxed text-[11px] text-slate-500 dark:text-slate-400">
+                আপনার নিবন্ধিত <span className="font-mono">@gmail.com</span> দিয়ে সাইন-ইন করলে স্বয়ংক্রিয়ভাবে আপনার শিক্ষক কোড, শ্রেণি শিক্ষক রোল ও বিষয় বণ্টন যুক্ত হবে। সুপার অ্যাডমিন (<span className="font-mono">ananneyadebnath@gmail.com</span>) পূর্ণ নিয়ন্ত্রণ সংরক্ষণ করেন।
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Official Marksheet Transcript Modal */}
+      {showTranscriptModal && lookupResult && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/80 backdrop-blur-sm p-4 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-6 max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 no-print">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Award className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+                <span>অফিসিয়াল মার্কশিট ও গ্রেড ট্রান্সক্রিপ্ট</span>
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3.5 py-1.5 text-xs font-semibold rounded-xl bg-teal-700 hover:bg-[#0d5c56] text-white flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>প্রিন্ট / PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowTranscriptModal(false)}
+                  className="p-1.5 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              {users.slice(0, 3).map((u) => (
-                <button
-                  key={u.uid}
-                  type="button"
-                  onClick={() => {
-                    enterSandboxAs(u.uid);
-                    setLoginModalOpen(false);
-                  }}
-                  className="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-teal-600 dark:hover:border-teal-500 hover:bg-teal-50/40 dark:hover:bg-teal-950/30 transition-colors flex items-center justify-between gap-3 cursor-pointer"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      {u.role === 'admin' ? (
-                        <ShieldCheck className="w-4 h-4 text-teal-700 dark:text-teal-400 shrink-0" />
-                      ) : (
-                        <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      )}
-                      <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                        {u.name}
-                      </span>
-                      <span className="text-xs font-mono text-teal-700 dark:text-teal-400">
-                        [{u.teacherCode}]
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                      {u.role === 'admin' ? 'System Admin' : 'Class & Subject Teacher'} · {u.email}
-                    </p>
-                  </div>
-                  <span className="text-xs font-semibold text-teal-700 dark:text-teal-400 shrink-0">
-                    প্রবেশ →
-                  </span>
-                </button>
-              ))}
-            </div>
+            <MarksheetTranscriptView
+              mode="single-term"
+              examTitle={selectedLookupTerm?.name || 'Half-Yearly Examination'}
+              academicYearLabel="Session 2026"
+              classNameLabel={selectedLookupClass?.className || 'Class'}
+              sectionLabel={selectedLookupClass?.section || 'A'}
+              singleResult={lookupResult}
+              attendance={lookupAttendance || undefined}
+              num={num}
+            />
           </div>
         </div>
       )}

@@ -514,12 +514,13 @@ export const CLASS_FILTER_OPTIONS: {
   { className: 'Class 10', labelBn: '১০ম শ্রেণি', shortBn: '১০ম' },
 ];
 
-export function buildWhatsAppUrl(phone?: string): string {
+export function buildWhatsAppUrl(phone?: string, text?: string): string {
   if (!phone) return '';
   const digits = phone.replace(/\D/g, '');
   if (!digits) return '';
   const normalized = digits.startsWith('88') ? digits : `88${digits}`;
-  return `https://wa.me/${normalized}`;
+  const query = text ? `?text=${encodeURIComponent(text)}` : '';
+  return `https://wa.me/${normalized}${query}`;
 }
 
 export function formatBengaliLiveDate(date: Date = new Date()): string {

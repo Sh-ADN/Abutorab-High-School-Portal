@@ -44,7 +44,9 @@ import {
 import {
   calculateGradeAndGpa,
   deriveTeacherCode,
+  findMatchingTeacherProfileByEmailOrUid,
   formatNumeral,
+  mergeAndLinkTeacherProfileUid,
   resolveInitialUserRole,
   sanitizeFirestoreId,
   sanitizeStudentPayload,
@@ -73,6 +75,7 @@ interface SchoolContextValue {
   authLoading: boolean;
   authError: string | null;
   isFirebaseAuthenticated: boolean;
+  isSuperAdminSession: boolean;
   activeView: WorkspaceView;
   setActiveView: (view: WorkspaceView) => void;
   showPublicWebsite: boolean;
@@ -125,8 +128,10 @@ interface SchoolContextValue {
       teacherCode?: string;
       designation?: string;
       name?: string;
+      email?: string;
     }
   ) => Promise<void>;
+  linkUserToTeacherProfile: (sourceTeacherUid: string, targetGoogleUid: string) => Promise<void>;
   createTeacherAccount: (input: {
     name: string;
     email: string;
@@ -386,24 +391,58 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
 
         const nowIso = new Date().toISOString();
-        const email = (user.email || '').trim();
+        const email = (user.email || '').trim().toLowerCase();
         const initialRole = resolveInitialUserRole(email);
         const displayName = (user.displayName || email.split('@')[0] || 'Teacher').slice(0, 120);
         const derivedCode = deriveTeacherCode(displayName);
 
         if (!userSnap || !userSnap.exists()) {
+          // Check if an existing seeded/pre-registered teacher profile matches by email (case-insensitive)
+          const matchedSeedProfile = findMatchingTeacherProfileByEmailOrUid(
+            SEED_USERS,
+            email,
+            user.uid
+          );
+          const matchedDirEntry = PUBLIC_TEACHERS_DIRECTORY.find(
+            (d) => (d.email || '').trim().toLowerCase() === email
+          );
+
+          const resolvedName = (
+            matchedSeedProfile?.name ||
+            matchedDirEntry?.name ||
+            displayName
+          ).slice(0, 120);
+          const resolvedCode = (
+            matchedSeedProfile?.teacherCode ||
+            matchedDirEntry?.teacherCode ||
+            derivedCode
+          )
+            .trim()
+            .toUpperCase()
+            .slice(0, 12);
+          const resolvedDesignation = (
+            matchedSeedProfile?.designation ||
+            (matchedDirEntry
+              ? `${matchedDirEntry.designation} — ${matchedDirEntry.subject}`
+              : initialRole === 'admin'
+                ? 'System Administrator & Senior Faculty'
+                : 'Assistant Teacher')
+          ).slice(0, 80);
+
           const newProfile: UserProfile = {
             uid: user.uid,
-            name: displayName,
+            name: resolvedName,
             email: email || 'teacher@aths.edu.bd',
-            photoURL: (user.photoURL || '').slice(0, 500),
+            photoURL: (
+              user.photoURL ||
+              matchedSeedProfile?.photoURL ||
+              matchedDirEntry?.photoUrl ||
+              ''
+            ).slice(0, 500),
             role: initialRole,
-            teacherCode: derivedCode,
+            teacherCode: resolvedCode || 'TCH',
             status: 'active',
-            designation:
-              initialRole === 'admin'
-                ? 'System Administrator & Senior Faculty'
-                : 'Assistant Teacher',
+            designation: resolvedDesignation,
             createdAt: nowIso,
             updatedAt: nowIso,
           };
@@ -416,7 +455,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           // Ensure ananneyadebnath@gmail.com always has admin & active status
           const existingData = userSnap.data() as UserProfile;
           if (
-            email.toLowerCase() === 'ananneyadebnath@gmail.com' &&
+            email === 'ananneyadebnath@gmail.com' &&
             (existingData.role !== 'admin' || existingData.status !== 'active')
           ) {
             const updatedAdmin: UserProfile = {
@@ -568,8 +607,18 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const currentUser = useMemo<UserProfile | null>(() => {
     if (fbUser) {
-      const found = users.find((u) => u.uid === fbUser.uid);
-      if (found) return found;
+      const matched = findMatchingTeacherProfileByEmailOrUid(users, fbUser.email, fbUser.uid);
+      if (matched) {
+        const isSuperAdmin =
+          (fbUser.email || '').trim().toLowerCase() === 'ananneyadebnath@gmail.com';
+        return {
+          ...matched,
+          uid: fbUser.uid,
+          email: fbUser.email || matched.email,
+          photoURL: fbUser.photoURL || matched.photoURL,
+          role: isSuperAdmin ? 'admin' : matched.role,
+        };
+      }
       const email = fbUser.email || '';
       const role = resolveInitialUserRole(email);
       return {
@@ -590,6 +639,12 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     return null;
   }, [fbUser, sandboxUid, users]);
+
+  const isSuperAdminSession = useMemo<boolean>(() => {
+    if (initialAutostart) return true;
+    const email = (fbUser?.email || currentUser?.email || '').trim().toLowerCase();
+    return email === 'ananneyadebnath@gmail.com';
+  }, [initialAutostart, fbUser, currentUser]);
 
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
@@ -652,16 +707,21 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         teacherCode?: string;
         designation?: string;
         name?: string;
+        email?: string;
       }
     ) => {
       if (currentUser?.role !== 'admin') return;
       const target = users.find((u) => u.uid === uid);
       if (!target) return;
 
+      const cleanEmail = (updates.email ?? target.email).trim().toLowerCase().slice(0, 160);
+      const isSuperAdminEmail = cleanEmail === 'ananneyadebnath@gmail.com';
+
       const updated: UserProfile = {
         ...target,
-        role: updates.role ?? target.role,
-        status: updates.status ?? target.status,
+        email: cleanEmail || target.email,
+        role: isSuperAdminEmail ? 'admin' : updates.role ?? target.role,
+        status: isSuperAdminEmail ? 'active' : updates.status ?? target.status,
         teacherCode: (updates.teacherCode ?? target.teacherCode)
           .trim()
           .toUpperCase()
@@ -670,6 +730,48 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         name: (updates.name ?? target.name).trim().slice(0, 120),
         updatedAt: new Date().toISOString(),
       };
+
+      // If another user profile (e.g. a newly signed-in Google user) already has this exact email,
+      // automatically link that Google user's UID to this teacher profile!
+      const existingGoogleUserWithSameEmail =
+        updates.email !== undefined
+          ? users.find((u) => u.uid !== uid && u.email.trim().toLowerCase() === cleanEmail)
+          : undefined;
+
+      if (existingGoogleUserWithSameEmail) {
+        const merged = mergeAndLinkTeacherProfileUid({
+          sourceUid: uid,
+          targetUid: existingGoogleUserWithSameEmail.uid,
+          targetEmail: cleanEmail,
+          targetPhotoURL: existingGoogleUserWithSameEmail.photoURL,
+          users: users.map((u) => (u.uid === uid ? updated : u)),
+          classSections,
+          subjectAssignments,
+        });
+        setUsers(merged.updatedUsers);
+        setClassSections(merged.updatedClassSections);
+        setSubjectAssignments(merged.updatedSubjectAssignments);
+
+        if (fbUser && merged.linkedProfile) {
+          try {
+            const batch = writeBatch(db);
+            batch.set(doc(db, 'users', merged.linkedProfile.uid), merged.linkedProfile);
+            if (uid !== merged.linkedProfile.uid) {
+              batch.delete(doc(db, 'users', uid));
+            }
+            merged.updatedClassSections.forEach((cs) => {
+              batch.set(doc(db, 'classSections', cs.id), cs);
+            });
+            merged.updatedSubjectAssignments.forEach((asg) => {
+              batch.set(doc(db, 'subjectAssignments', asg.id), asg);
+            });
+            await batch.commit();
+          } catch (err) {
+            handleFirestoreError(err, OperationType.WRITE, `users/${merged.linkedProfile.uid}`);
+          }
+        }
+        return;
+      }
 
       setUsers((prev) => prev.map((u) => (u.uid === uid ? updated : u)));
 
@@ -705,7 +807,46 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [currentUser, users, fbUser]
+    [currentUser, users, classSections, subjectAssignments, fbUser]
+  );
+
+  const linkUserToTeacherProfile = useCallback(
+    async (sourceTeacherUid: string, targetGoogleUid: string) => {
+      if (currentUser?.role !== 'admin') return;
+      if (!sourceTeacherUid || !targetGoogleUid || sourceTeacherUid === targetGoogleUid) return;
+
+      const merged = mergeAndLinkTeacherProfileUid({
+        sourceUid: sourceTeacherUid,
+        targetUid: targetGoogleUid,
+        users,
+        classSections,
+        subjectAssignments,
+      });
+
+      if (!merged.linkedProfile) return;
+
+      setUsers(merged.updatedUsers);
+      setClassSections(merged.updatedClassSections);
+      setSubjectAssignments(merged.updatedSubjectAssignments);
+
+      if (fbUser) {
+        try {
+          const batch = writeBatch(db);
+          batch.set(doc(db, 'users', merged.linkedProfile.uid), merged.linkedProfile);
+          batch.delete(doc(db, 'users', sourceTeacherUid));
+          merged.updatedClassSections.forEach((cs) => {
+            batch.set(doc(db, 'classSections', cs.id), cs);
+          });
+          merged.updatedSubjectAssignments.forEach((asg) => {
+            batch.set(doc(db, 'subjectAssignments', asg.id), asg);
+          });
+          await batch.commit();
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `users/${merged.linkedProfile.uid}`);
+        }
+      }
+    },
+    [currentUser, users, classSections, subjectAssignments, fbUser]
   );
 
   const createTeacherAccount = useCallback(
@@ -1612,6 +1753,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       authLoading,
       authError,
       isFirebaseAuthenticated: Boolean(fbUser),
+      isSuperAdminSession,
       activeView,
       setActiveView,
       showPublicWebsite,
@@ -1647,6 +1789,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       holidays,
       toggleHolidayDate,
       updateUserRoleAndStatus,
+      linkUserToTeacherProfile,
       createTeacherAccount,
       seedDirectoryTeachers,
       createAcademicYear,
@@ -1681,6 +1824,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       authLoading,
       authError,
       fbUser,
+      isSuperAdminSession,
       activeView,
       showPublicWebsite,
       signInWithGoogle,
@@ -1710,6 +1854,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       holidays,
       toggleHolidayDate,
       updateUserRoleAndStatus,
+      linkUserToTeacherProfile,
       createTeacherAccount,
       seedDirectoryTeachers,
       createAcademicYear,

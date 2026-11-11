@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "আবুতোরাব বহুমুখী উচ্চ বিদ্যালয় পোর্টাল",
+  "short_name": "ATBHS Portal",
+  "description": "আবুতোরাব বহুমুখী উচ্চ বিদ্যালয় (Abutorab High School) — Academic Management, Attendance, Exam Marks, Tabulation & Public School Website.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#0f766e",
+  "background_color": "#f8fafc",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/assets/aistudio/school_logo_large_f25747b9.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/aistudio/school_logo_large_f25747b9.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -2,7 +2,12 @@ import React, { useState } from 'react';
 import { SchoolProvider, useSchool } from './context/SchoolContext';
 import { LoginScreen } from './components/LoginScreen';
 import { PublicSchoolWebsite } from './components/PublicSchoolWebsite';
-import { HeaderBar, MobileBottomNav, PortalSidebar } from './components/HeaderBar';
+import {
+  DevRoleSwitcherPopover,
+  HeaderBar,
+  MobileBottomNav,
+  PortalSidebar,
+} from './components/HeaderBar';
 import { TeacherDashboard } from './components/TeacherDashboard';
 import { StudentRosterPanel } from './components/StudentRosterPanel';
 import { StudentAttendanceModule } from './components/StudentAttendanceModule';
@@ -12,24 +17,8 @@ import { SchoolRoutineModule } from './components/SchoolRoutineModule';
 import { AdminControlCenter } from './components/AdminControlCenter';
 
 const PortalShell: React.FC = () => {
-  const { currentUser, authLoading, activeView, showPublicWebsite, num } = useSchool();
+  const { currentUser, activeView, showPublicWebsite, num } = useSchool();
   const [showDedicatedLoginScreen, setShowDedicatedLoginScreen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-  if (authLoading && !currentUser) {
-    return (
-      <div className="min-h-screen bg-[#f8fafc] dark:bg-[#0f172a] flex items-center justify-center p-6">
-        <div className="text-center space-y-2">
-          <div className="text-sm font-semibold text-teal-800 dark:text-teal-300">
-            আবুতোরাব বহুমুখী উচ্চ বিদ্যালয় পোর্টাল লোড হচ্ছে...
-          </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">
-            Connecting to Firebase Authentication & Cloud Firestore
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (!currentUser) {
     if (showDedicatedLoginScreen) {
@@ -65,18 +54,15 @@ const PortalShell: React.FC = () => {
   const isAdmin = currentUser.role === 'admin';
 
   return (
-    <div id="top" className="min-h-screen bg-[#f8fafc] dark:bg-[#0f172a] flex">
-      {/* Desktop Collapsible Left Sidebar (md:flex) */}
-      <PortalSidebar
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
-      />
+    <div id="top" className="min-h-screen bg-[#f8fafc] dark:bg-[#0f172a]">
+      {/* Desktop Fixed Left Sidebar (lg:flex, w-60) */}
+      <PortalSidebar />
 
-      {/* Main Content Area + Sticky Top App Bar */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Main Content Area (lg:pl-60 to account for fixed sidebar) */}
+      <div className="lg:pl-60 flex flex-col min-h-screen min-w-0 transition-all">
         <HeaderBar />
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-7 pb-24 md:pb-10">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-24 lg:pb-10">
           {activeView === 'teacher-dashboard' && <TeacherDashboard />}
           {activeView === 'student-attendance' && <StudentAttendanceModule />}
           {activeView === 'exam-marks' && <SubjectMarksModule />}
@@ -98,13 +84,13 @@ const PortalShell: React.FC = () => {
             ))}
         </main>
 
-        <footer className="no-print hidden md:block w-full border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-3.5 text-xs text-slate-500 dark:text-slate-400">
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+        <footer className="no-print hidden lg:block w-full border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-3.5 text-xs text-slate-500 dark:text-slate-400">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
             <span>
               আবুতোরাব বহুমুখী উচ্চ বিদ্যালয় (Abutorab High School) · স্থাপিতঃ {num(1914)} ইং · মীরসরাই,
               চট্টগ্রাম · EIIN: 104600
             </span>
-            <span className="tabular-nums">
+            <span className="tabular-nums font-mono">
               Role: {currentUser.role.toUpperCase()} [{currentUser.teacherCode}] · Session{' '}
               {num(2026)}
             </span>
@@ -112,8 +98,11 @@ const PortalShell: React.FC = () => {
         </footer>
       </div>
 
-      {/* Mobile Fixed Glassmorphic Bottom Navigation Bar (< 768px) */}
+      {/* Mobile Fixed 5-Tab Bottom Navigation Bar (< 1024px, lg:hidden) */}
       <MobileBottomNav />
+
+      {/* Floating Developer Role Switcher (Super Admin only, bottom-left) */}
+      <DevRoleSwitcherPopover />
     </div>
   );
 };

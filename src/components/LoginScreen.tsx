@@ -180,54 +180,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onBackToWebsite }) => 
                 type="button"
                 onClick={handleGoogleLogin}
                 disabled={isSigningIn}
-                className="mt-6 w-full py-3 px-4 rounded-lg bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap"
+                className="mt-6 w-full py-3.5 px-4 rounded-xl bg-teal-700 hover:bg-[#0d5c56] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap"
               >
                 <LogIn className="w-4 h-4 shrink-0" />
                 <span>{isSigningIn ? 'Connecting to Google...' : 'Sign in with Google'}</span>
               </button>
 
-              <div className="my-6 flex items-center gap-3">
-                <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
-                <span className="text-xs text-slate-400 dark:text-slate-500">
-                  Or Instant Role Preview
-                </span>
-                <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
-              </div>
-
-              <div className="space-y-2.5">
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Evaluate the Admin Control Panel or Teacher Dashboard directly with pre-loaded Abu
-                  Torab High School records:
+              <div className="mt-6 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-teal-800 dark:text-teal-300">
+                  <ShieldCheck className="w-4 h-4 shrink-0" />
+                  <span>Official Google Sign-In & Automatic Profile Linking</span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Teachers signing in with their registered <span className="font-mono">@gmail.com</span> address are automatically matched to their school profile, preserving their <span className="font-mono">teacherCode</span>, Class Teacher role, and Subject Assignments. Super Admin (<span className="font-mono">ananneyadebnath@gmail.com</span>) retains full administrative control.
                 </p>
-
-                {users.slice(0, 3).map((u) => (
-                  <button
-                    key={u.uid}
-                    type="button"
-                    onClick={() => enterSandboxAs(u.uid)}
-                    className="w-full text-left p-3 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-blue-600 dark:hover:border-blue-500 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center justify-between gap-3 group cursor-pointer"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        {u.role === 'admin' ? (
-                          <ShieldCheck className="w-4 h-4 text-blue-700 dark:text-blue-400 shrink-0" />
-                        ) : (
-                          <UserCheck className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
-                        )}
-                        <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">
-                          {u.name}
-                        </span>
-                        <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                          [{u.teacherCode}]
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {u.role === 'admin' ? 'Admin' : 'Teacher'} · {u.email}
-                      </p>
-                    </div>
-                    <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 shrink-0" />
-                  </button>
-                ))}
               </div>
             </div>
 

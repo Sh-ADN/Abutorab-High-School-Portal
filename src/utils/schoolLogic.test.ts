@@ -5,7 +5,10 @@ import {
   canManageClassRosterAndAttendance,
   canManageSubjectMarks,
   deriveTeacherCode,
+  findMatchingTeacherProfileByEmailOrUid,
   formatNumeral,
+  isPlaceholderTeacherEmail,
+  mergeAndLinkTeacherProfileUid,
   parseLocalizedInt,
   parseStudentRosterCsv,
   resolveInitialUserRole,
@@ -165,4 +168,80 @@ test('sanitizeStudentPayload enforces blueprint maxLength and valid roll range',
   assert.match(sanitized.id, /^[a-zA-Z0-9_-]+$/);
   assert.equal(sanitized.roll, 1);
   assert.equal(sanitized.name.length, 120);
+});
+
+test('findMatchingTeacherProfileByEmailOrUid and mergeAndLinkTeacherProfileUid link Google UID and migrate assignments', () => {
+  const seededTeacher: UserProfile = {
+    uid: 'usr_dir_3_MA',
+    name: 'মোহাম্মদ মোহরম আলী',
+    email: 'moharam.real@gmail.com',
+    photoURL: '',
+    role: 'teacher',
+    teacherCode: 'M.A.',
+    status: 'active',
+    designation: 'সিনিয়র শিক্ষক — গণিত',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+
+  assert.equal(isPlaceholderTeacherEmail('ali@automatapro.com'), true);
+  assert.equal(isPlaceholderTeacherEmail('moharam.real@gmail.com'), false);
+
+  // Case-insensitive match by email when UID is different
+  const matched = findMatchingTeacherProfileByEmailOrUid(
+    [seededTeacher],
+    '  Moharam.Real@Gmail.com ',
+    'firebase_uid_999'
+  );
+  assert.ok(matched);
+  assert.equal(matched?.uid, 'usr_dir_3_MA');
+  assert.equal(matched?.teacherCode, 'M.A.');
+
+  // Merge & link UID to preserve teacherCode, Class Teacher role, and Subject Assignments
+  const sampleSections: ClassSection[] = [
+    {
+      id: 'cs_8_a',
+      academicYearId: 'ay_2026',
+      className: 'Class 8',
+      section: 'Section A',
+      classTeacherUid: 'usr_dir_3_MA',
+      classTeacherName: 'মোহাম্মদ মোহরম আলী',
+      classTeacherCode: 'M.A.',
+      roomNumber: '204',
+      createdAt: '2026-01-01T00:00:00Z',
+    },
+  ];
+
+  const sampleAssignments: SubjectAssignment[] = [
+    {
+      id: 'asg_8_math',
+      academicYearId: 'ay_2026',
+      classSectionId: 'cs_8_a',
+      className: 'Class 8',
+      section: 'Section A',
+      subjectCode: '109',
+      subjectName: 'Mathematics',
+      teacherUid: 'usr_dir_3_MA',
+      teacherName: 'মোহাম্মদ মোহরম আলী',
+      teacherCode: 'M.A.',
+      maxMarks: 100,
+      createdAt: '2026-01-01T00:00:00Z',
+    },
+  ];
+
+  const merged = mergeAndLinkTeacherProfileUid({
+    sourceUid: 'usr_dir_3_MA',
+    targetUid: 'firebase_google_uid_999',
+    targetEmail: 'moharam.real@gmail.com',
+    users: [seededTeacher],
+    classSections: sampleSections,
+    subjectAssignments: sampleAssignments,
+    nowIso: '2026-11-10T12:00:00Z',
+  });
+
+  assert.equal(merged.updatedUsers.length, 1);
+  assert.equal(merged.linkedProfile?.uid, 'firebase_google_uid_999');
+  assert.equal(merged.linkedProfile?.teacherCode, 'M.A.');
+  assert.equal(merged.updatedClassSections[0].classTeacherUid, 'firebase_google_uid_999');
+  assert.equal(merged.updatedSubjectAssignments[0].teacherUid, 'firebase_google_uid_999');
 });

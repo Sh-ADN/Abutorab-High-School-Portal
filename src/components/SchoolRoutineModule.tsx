@@ -332,150 +332,200 @@ export const SchoolRoutineModule: React.FC = () => {
         </div>
       )}
 
-      {/* Top Module Header & Sub-Navigation Tabs */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 print:hidden">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-400">
-              <Calendar className="w-3.5 h-3.5" />
-              <span>Abu Torab High School · Academic Timetable & Workload Engine</span>
+      {/* Single Compact Sticky Toolbar */}
+      <div className="no-print sticky top-14 z-20 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2.5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Left: Sub-tabs & Quick Filter Pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-800 p-0.5 bg-slate-100 dark:bg-slate-950">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('routine')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md flex items-center gap-1 transition-all cursor-pointer ${
+                  activeSubTab === 'routine'
+                    ? 'bg-teal-700 text-white shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>ক্লাস রুটিন</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('statistics')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md flex items-center gap-1 transition-all cursor-pointer ${
+                  activeSubTab === 'statistics'
+                    ? 'bg-teal-700 text-white shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>শিক্ষক পরিসংখ্যান</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('live-sync')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md flex items-center gap-1 transition-all cursor-pointer ${
+                  activeSubTab === 'live-sync'
+                    ? 'bg-teal-700 text-white shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>লাইভ আপডেট</span>
+              </button>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white mt-1">
-              School Routine & Teacher Workload Statistics (ক্লাস রুটিন ও শিক্ষক পরিসংখ্যান)
-            </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Interactive routine viewer powered by <span className="font-mono">routine.json</span>,{' '}
-              <span className="font-mono">ClassUtils.kt</span>,{' '}
-              <span className="font-mono">TeacherStatistics.kt</span>, and live Google Apps Script
-              sync.
-            </p>
+
+            {activeSubTab === 'routine' && (
+              <>
+                <select
+                  id="routine-class-filter"
+                  value={selectedClassFilter}
+                  onChange={(e) => setSelectedClassFilter(e.target.value)}
+                  className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="ALL">সকল শ্রেণি (VI–X)</option>
+                  {ALL_ROUTINE_CLASS_CODES.map((cls) => (
+                    <option key={cls} value={cls}>
+                      শ্রেণি {cls}
+                    </option>
+                  ))}
+                  <option value="VI">Class VI (All)</option>
+                  <option value="VII">Class VII (All)</option>
+                  <option value="VIII">Class VIII (All)</option>
+                  <option value="IX">Class IX (All)</option>
+                  <option value="X">Class X (All)</option>
+                </select>
+
+                <select
+                  id="routine-teacher-filter"
+                  value={selectedTeacherFilter}
+                  onChange={(e) => setSelectedTeacherFilter(e.target.value)}
+                  className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 max-w-36 truncate"
+                >
+                  <option value="ALL">সকল শিক্ষক ({num(availableTeachers.length)})</option>
+                  {availableTeachers.map((code) => (
+                    <option key={code} value={code}>
+                      {code} — {ROUTINE_TEACHER_DIRECTORY[code] || code}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  id="routine-day-filter"
+                  value={selectedDayFilter}
+                  onChange={(e) =>
+                    setSelectedDayFilter(
+                      e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
+                    )
+                  }
+                  className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="ALL">সকল দিন (রবি–বৃহ)</option>
+                  {DAYS_CONFIG.map((d) => (
+                    <option key={d.day} value={d.day}>
+                      {d.bengaliName}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
           </div>
 
+          {/* Right: Search, My Routine, Print, CSV, Add Entry */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedTeacherFilter(myRoutineTeacherCode);
-                setSelectedClassFilter('ALL');
-                setActiveSubTab('routine');
-              }}
-              className="px-3.5 py-2 text-xs font-semibold rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 flex items-center gap-1.5 cursor-pointer"
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>My Routine ({myRoutineTeacherCode})</span>
-            </button>
+            {activeSubTab === 'routine' && (
+              <>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="বিষয় বা শিক্ষক..."
+                    className="text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white pl-7 pr-2.5 py-1.5 w-28 sm:w-36 focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
 
-            <button
-              type="button"
-              onClick={handleExportRoutineCsv}
-              className="px-3.5 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTeacherFilter(myRoutineTeacherCode);
+                    setSelectedClassFilter('ALL');
+                    setActiveSubTab('routine');
+                  }}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50/70 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+                  title="আমার নির্ধারিত ক্লাসের রুটিন"
+                >
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">আমার রুটিন ({myRoutineTeacherCode})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExportRoutineCsv}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+                  title="CSV এক্সপোর্ট"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">CSV</span>
+                </button>
+              </>
+            )}
 
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-3.5 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+              title="প্রিন্ট"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Print Routine</span>
+              <span className="hidden sm:inline">প্রিন্ট</span>
             </button>
 
             {isAdmin && (
               <button
                 type="button"
                 onClick={() => setShowAddModal((prev) => !prev)}
-                className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-blue-700 hover:bg-slate-800 dark:hover:bg-blue-600 text-white flex items-center gap-1.5 cursor-pointer"
+                className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-teal-700 hover:bg-[#0d5c56] text-white flex items-center gap-1 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add Entry</span>
+                <span className="hidden sm:inline">যুক্ত করুন</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Sub-Tabs */}
-        <div
-          role="tablist"
-          aria-label="Routine and Statistics Views"
-          className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeSubTab === 'routine'}
-            onClick={() => setActiveSubTab('routine')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
-              activeSubTab === 'routine'
-                ? 'bg-blue-700 text-white'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            <Calendar className="w-3.5 h-3.5" />
-            <span>1. Interactive Routine Viewer ({num(routineRecords.length)})</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeSubTab === 'statistics'}
-            onClick={() => setActiveSubTab('statistics')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
-              activeSubTab === 'statistics'
-                ? 'bg-blue-700 text-white'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-            <span>2. Teacher Workload Statistics (TeacherStatistics.kt)</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeSubTab === 'live-sync'}
-            onClick={() => setActiveSubTab('live-sync')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
-              activeSubTab === 'live-sync'
-                ? 'bg-blue-700 text-white'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span>3. Live Routine Update & Web View</span>
-          </button>
-        </div>
-
-        {/* Optional Admin Add Routine Entry Form */}
+        {/* Collapsible Admin Add Routine Entry Form */}
         {showAddModal && isAdmin && (
           <form
             onSubmit={handleAddRoutineRecord}
-            className="mt-5 pt-5 border-t border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end"
+            className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-6 gap-2.5 items-end"
           >
             <div>
               <label
                 htmlFor="new-rt-class"
-                className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1"
+                className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1"
               >
-                Class / Section
+                শ্রেণি ও শাখা
               </label>
               <input
                 id="new-rt-class"
                 type="text"
                 value={newClassName}
                 onChange={(e) => setNewClassName(e.target.value)}
-                placeholder="e.g. IX-A or X"
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+                placeholder="যেমন: IX-A বা X"
+                className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
               />
             </div>
             <div>
               <label
                 htmlFor="new-rt-days"
-                className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1"
+                className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1"
               >
-                Days (2=Sun..6=Thu)
+                দিন (রবি=২..বৃহ=৬)
               </label>
               <input
                 id="new-rt-days"
@@ -483,21 +533,21 @@ export const SchoolRoutineModule: React.FC = () => {
                 value={newDays}
                 onChange={(e) => setNewDays(e.target.value)}
                 placeholder="(2-6)"
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+                className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
               />
             </div>
             <div>
               <label
                 htmlFor="new-rt-period"
-                className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1"
+                className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1"
               >
-                Period (1–7)
+                পিরিয়ড (১–৭)
               </label>
               <select
                 id="new-rt-period"
                 value={newPeriod}
                 onChange={(e) => setNewPeriod(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
               >
                 {PERIOD_SCHEDULE.map((p) => (
                   <option key={p.period} value={p.period}>
@@ -509,229 +559,59 @@ export const SchoolRoutineModule: React.FC = () => {
             <div>
               <label
                 htmlFor="new-rt-subject"
-                className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1"
+                className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1"
               >
-                Subject
+                বিষয়
               </label>
               <input
                 id="new-rt-subject"
                 type="text"
                 value={newSubject}
                 onChange={(e) => setNewSubject(e.target.value)}
-                placeholder="e.g. Math, Eng-1"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+                placeholder="যেমন: গণিত"
+                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
               />
             </div>
             <div>
               <label
                 htmlFor="new-rt-teacher"
-                className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1"
+                className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1"
               >
-                Teacher Code
+                শিক্ষক কোড
               </label>
               <input
                 id="new-rt-teacher"
                 type="text"
                 value={newTeacher}
                 onChange={(e) => setNewTeacher(e.target.value)}
-                placeholder="e.g. A.D.N."
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+                placeholder="যেমন: A.D.N."
+                className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
               />
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-700 hover:bg-blue-800 text-white cursor-pointer"
+                className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-teal-700 hover:bg-[#0d5c56] text-white cursor-pointer"
               >
-                Save Entry
+                সংরক্ষণ
               </button>
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
-                className="px-3 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 cursor-pointer"
               >
-                Cancel
+                বাতিল
               </button>
             </div>
           </form>
         )}
-      </section>
+      </div>
 
       {/* =====================================================================
           TAB 1: INTERACTIVE ROUTINE VIEWER
       ===================================================================== */}
       {activeSubTab === 'routine' && (
         <div className="space-y-6">
-          {/* Filter Bar */}
-          <section
-            aria-label="Routine Filters"
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4 print:hidden"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                <Filter className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-                <span>
-                  Filter by Class/Section (ClassUtils.isClassMatch), Teacher Code, Day of Week &
-                  Period
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedDayFilter(todayInfo.dayNumber);
-                  }}
-                  className="px-2.5 py-1 text-xs font-medium rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 cursor-pointer"
-                >
-                  Today ({todayInfo.dayConfig.name})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedClassFilter('ALL');
-                    setSelectedTeacherFilter('ALL');
-                    setSelectedDayFilter('ALL');
-                    setSelectedPeriodFilter('ALL');
-                    setSearchQuery('');
-                  }}
-                  className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  Clear All Filters
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-              {/* 1. Class/Section Filter */}
-              <div>
-                <label
-                  htmlFor="routine-class-filter"
-                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1"
-                >
-                  Class / Section
-                </label>
-                <select
-                  id="routine-class-filter"
-                  value={selectedClassFilter}
-                  onChange={(e) => setSelectedClassFilter(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
-                >
-                  <option value="ALL">All Classes (VI–X)</option>
-                  {ALL_ROUTINE_CLASS_CODES.map((cls) => (
-                    <option key={cls} value={cls}>
-                      Class {cls} (Includes shared {cls.split('-')[0]})
-                    </option>
-                  ))}
-                  <option value="VI">Class VI (All)</option>
-                  <option value="VII">Class VII (All)</option>
-                  <option value="VIII">Class VIII (All)</option>
-                  <option value="IX">Class IX (All)</option>
-                  <option value="X">Class X (All)</option>
-                </select>
-              </div>
-
-              {/* 2. Teacher Filter */}
-              <div>
-                <label
-                  htmlFor="routine-teacher-filter"
-                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1"
-                >
-                  Teacher (teacherCode)
-                </label>
-                <select
-                  id="routine-teacher-filter"
-                  value={selectedTeacherFilter}
-                  onChange={(e) => setSelectedTeacherFilter(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
-                >
-                  <option value="ALL">All Teachers ({num(availableTeachers.length)})</option>
-                  {availableTeachers.map((code) => (
-                    <option key={code} value={code}>
-                      {code} — {ROUTINE_TEACHER_DIRECTORY[code] || code}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 3. Day of Week Filter */}
-              <div>
-                <label
-                  htmlFor="routine-day-filter"
-                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1"
-                >
-                  Day of Week
-                </label>
-                <select
-                  id="routine-day-filter"
-                  value={selectedDayFilter}
-                  onChange={(e) =>
-                    setSelectedDayFilter(
-                      e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
-                    )
-                  }
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
-                >
-                  <option value="ALL">All Working Days (Sun–Thu)</option>
-                  {DAYS_CONFIG.map((d) => (
-                    <option key={d.day} value={d.day}>
-                      {d.name} ({d.bengaliName}) [Day {d.day}]
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 4. Period Filter */}
-              <div>
-                <label
-                  htmlFor="routine-period-filter"
-                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1"
-                >
-                  Period
-                </label>
-                <select
-                  id="routine-period-filter"
-                  value={selectedPeriodFilter}
-                  onChange={(e) =>
-                    setSelectedPeriodFilter(
-                      e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
-                    )
-                  }
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
-                >
-                  <option value="ALL">All Periods (1st–7th)</option>
-                  {PERIOD_SCHEDULE.map((p) => (
-                    <option key={p.period} value={p.period}>
-                      {p.label} ({p.timeRange})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 5. Keyword Search */}
-              <div>
-                <label
-                  htmlFor="routine-search-input"
-                  className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1"
-                >
-                  Search Subject / Teacher
-                </label>
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    id="routine-search-input"
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="e.g. Math, Religion, A.D.N."
-                    className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Weekly Timetable Matrix Grid (Days x Periods with Tiffin Break) */}
           <section
             aria-label="Weekly Timetable Grid"
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4"

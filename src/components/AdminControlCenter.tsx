@@ -1,11 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Bell,
   BookOpen,
   CheckCircle2,
+  Clock,
   Edit3,
+  FileSpreadsheet,
   Lock,
+  MessageCircle,
   Plus,
+  Search,
   ShieldCheck,
   Trash2,
   Unlock,
@@ -18,10 +22,12 @@ import { AdminMatrixPanel } from './AdminMatrixPanel';
 import { AdminAcademicPanel } from './AdminAcademicPanel';
 import { StudentRosterPanel } from './StudentRosterPanel';
 import { NoticeRecord } from '../types/school';
+import { buildWhatsAppUrl, PUBLIC_TEACHERS_DIRECTORY } from '../data/schoolWebsiteData';
 
 export type AdminTabId =
   | 'teachers-roles'
   | 'class-subject-matrix'
+  | 'marks-progress'
   | 'student-roster'
   | 'result-lock-publish'
   | 'notice-management';
@@ -31,8 +37,11 @@ export const AdminControlCenter: React.FC<{
 }> = ({ initialTab = 'teachers-roles' }) => {
   const {
     currentUser,
+    users,
     examTerms,
+    classSections,
     selectedAcademicYearId,
+    selectedTermId: globalTermId,
     subjectAssignments,
     subjectMarks,
     students,
@@ -50,6 +59,11 @@ export const AdminControlCenter: React.FC<{
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+
+  // Marks submission progress state
+  const [progressTermId, setProgressTermId] = useState<string>(globalTermId || '');
+  const [progressClassId, setProgressClassId] = useState<string>('ALL');
+  const [progressSearch, setProgressSearch] = useState<string>('');
 
   // Notice editor state
   const [editingNoticeId, setEditingNoticeId] = useState<string | null>(null);
@@ -130,6 +144,11 @@ export const AdminControlCenter: React.FC<{
       icon: <BookOpen className="w-4 h-4 shrink-0" />,
     },
     {
+      id: 'marks-progress',
+      labelBn: 'নম্বর জমার অগ্রগতি ও তাগিদ',
+      icon: <FileSpreadsheet className="w-4 h-4 shrink-0" />,
+    },
+    {
       id: 'student-roster',
       labelBn: 'শিক্ষার্থী তালিকা (CSV Bulk Import)',
       icon: <Users className="w-4 h-4 shrink-0" />,
@@ -146,9 +165,90 @@ export const AdminControlCenter: React.FC<{
     },
   ];
 
+  // Active selected term for progress
+  const activeProgressTerm = useMemo(() => {
+    return yearTerms.find((t) => t.id === progressTermId) || yearTerms[0];
+  }, [yearTerms, progressTermId]);
+
+  // Subject-wise marks completion records
+  const marksProgressList = useMemo(() => {
+    if (!activeProgressTerm) return [];
+
+    let filtered = yearAssignments;
+    if (progressClassId !== 'ALL') {
+      filtered = filtered.filter((a) => a.classSectionId === progressClassId);
+    }
+    if (progressSearch.trim()) {
+      const q = progressSearch.toLowerCase();
+      filtered = filtered.filter(
+        (a) =>
+          a.subjectName.toLowerCase().includes(q) ||
+          a.teacherName.toLowerCase().includes(q) ||
+          a.teacherCode.toLowerCase().includes(q) ||
+          a.className.toLowerCase().includes(q)
+      );
+    }
+
+    return filtered.map((asg) => {
+      const classSec = classSections.find((cs) => cs.id === asg.classSectionId);
+      const totalStudents = students.filter(
+        (s) => s.classSectionId === asg.classSectionId && s.status === 'active'
+      ).length;
+
+      const enteredCount = subjectMarks.filter(
+        (m) => m.assignmentId === asg.id && m.termId === activeProgressTerm.id
+      ).length;
+
+      const isCompleted = totalStudents > 0 && enteredCount >= totalStudents;
+      const isNotStarted = enteredCount === 0;
+      const isPartial = !isCompleted && !isNotStarted;
+
+      // Find teacher contact
+      const publicTeacher = PUBLIC_TEACHERS_DIRECTORY.find(
+        (pt) =>
+          pt.teacherCode.toLowerCase() === asg.teacherCode.toLowerCase() ||
+          pt.name.toLowerCase().includes(asg.teacherName.toLowerCase())
+      );
+      const teacherPhone = publicTeacher?.phone || '';
+
+      const reminderMessage = `আসসালামু আলাইকুম শ্রদ্ধেয় ${asg.teacherName} স্যার/ম্যাডাম। আবুতোরাব বহুমুখী উচ্চ বিদ্যালয় থেকে জানানো যাচ্ছে যে, ২০২৬ শিক্ষাবর্ষের ${activeProgressTerm.name} পরীক্ষার "${asg.className} (${asg.section})" শাখার "${asg.subjectName}" বিষয়ের নম্বর এন্ট্রি এখনও বাকি রয়েছে (${num(enteredCount)}/${num(totalStudents)} জন এন্ট্রি হয়েছে)। অনুগ্রহ করে দ্রুত পোর্টাল থেকে নম্বর সাবমিট করার জন্য বিনীত অনুরোধ করা হলো। ধন্যবাদ।`;
+
+      const whatsAppUrl = teacherPhone
+        ? buildWhatsAppUrl(teacherPhone, reminderMessage)
+        : buildWhatsAppUrl('01817264285', reminderMessage);
+
+      return {
+        asg,
+        classSec,
+        totalStudents,
+        enteredCount,
+        isCompleted,
+        isNotStarted,
+        isPartial,
+        teacherPhone,
+        whatsAppUrl,
+        reminderMessage,
+      };
+    });
+  }, [
+    activeProgressTerm,
+    yearAssignments,
+    progressClassId,
+    progressSearch,
+    classSections,
+    students,
+    subjectMarks,
+    users,
+    num,
+  ]);
+
+  const totalProgressSubjects = marksProgressList.length;
+  const completedProgressSubjects = marksProgressList.filter((p) => p.isCompleted).length;
+  const pendingProgressSubjects = totalProgressSubjects - completedProgressSubjects;
+
   return (
     <div className="space-y-6 pb-20">
-      {/* Top 5-Tab Admin Control Center Navigation Bar */}
+      {/* Top 6-Tab Admin Control Center Navigation Bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-3 sm:p-4 shadow-2xs">
         <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
           {tabs.map((tab) => {
@@ -181,6 +281,205 @@ export const AdminControlCenter: React.FC<{
           <AdminMatrixPanel />
           <div className="border-t border-slate-200 dark:border-slate-800 pt-6">
             <AdminAcademicPanel />
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: নম্বর জমার অগ্রগতি ও হোয়াটসঅ্যাপ তাগিদ (Marks Submission Progress & WhatsApp Nudge) */}
+      {activeTab === 'marks-progress' && (
+        <div className="space-y-5">
+          {/* Header & Controls Toolbar */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+                  <span>বিষয়ভিত্তিক নম্বর জমার অগ্রগতি ও হোয়াটসঅ্যাপ রিমাইন্ডার</span>
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  কোন বিষয়ের নম্বর শিক্ষক কর্তৃক জমা সম্পন্ন হয়েছে এবং কোনগুলো বাকি আছে তা রিয়েল-টাইম পর্যবেক্ষণ করুন।
+                </p>
+              </div>
+
+              {/* Counters */}
+              <div className="flex items-center gap-2 text-xs font-semibold tabular-nums">
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                  মোট বিষয়: {num(totalProgressSubjects)}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                  সম্পন্ন: {num(completedProgressSubjects)}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+                  বাকি: {num(pendingProgressSubjects)}
+                </span>
+              </div>
+            </div>
+
+            {/* Filter Bar */}
+            <div className="flex flex-wrap items-center gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-1.5">
+                <label
+                  htmlFor="progress-term-select"
+                  className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap"
+                >
+                  পরীক্ষার টার্ম:
+                </label>
+                <select
+                  id="progress-term-select"
+                  value={progressTermId}
+                  onChange={(e) => setProgressTermId(e.target.value)}
+                  className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500"
+                >
+                  {yearTerms.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} {t.isLocked ? '(লকড)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <label
+                  htmlFor="progress-class-select"
+                  className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap"
+                >
+                  শ্রেণি ফিল্টার:
+                </label>
+                <select
+                  id="progress-class-select"
+                  value={progressClassId}
+                  onChange={(e) => setProgressClassId(e.target.value)}
+                  className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="ALL">সকল শ্রেণি ও শাখা</option>
+                  {classSections
+                    .filter((cs) => cs.academicYearId === selectedAcademicYearId)
+                    .map((cs) => (
+                      <option key={cs.id} value={cs.id}>
+                        {cs.className} ({cs.section})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="relative flex-1 min-w-[180px]">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={progressSearch}
+                  onChange={(e) => setProgressSearch(e.target.value)}
+                  placeholder="বিষয় বা শিক্ষকের নাম..."
+                  className="w-full text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white pl-7 pr-2.5 py-1.5 focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Marks Progress Table */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl overflow-hidden shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-slate-100/80 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 font-bold">
+                    <th className="py-3 px-4">শ্রেণি ও শাখা</th>
+                    <th className="py-3 px-4">বিষয় ও কোড</th>
+                    <th className="py-3 px-4">নির্ধারিত বিষয় শিক্ষক</th>
+                    <th className="py-3 px-4">অগ্রগতির অবস্থা</th>
+                    <th className="py-3 px-4 text-center">শতাংশ</th>
+                    <th className="py-3 px-4 text-right">তাগিদ / অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {marksProgressList.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-slate-500 dark:text-slate-400">
+                        কোনো বিষয় বা শিক্ষক পাওয়া যায়নি।
+                      </td>
+                    </tr>
+                  ) : (
+                    marksProgressList.map(({ asg, totalStudents, enteredCount, isCompleted, isNotStarted, isPartial, teacherPhone, whatsAppUrl }) => {
+                      const pct = totalStudents > 0 ? Math.min(100, Math.round((enteredCount / totalStudents) * 100)) : 0;
+                      return (
+                        <tr key={asg.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
+                            {asg.className} ({asg.section})
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-semibold text-slate-900 dark:text-white block">
+                              {asg.subjectName}
+                            </span>
+                            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              কোড: {asg.subjectCode}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-semibold text-slate-900 dark:text-white block">
+                              {asg.teacherName}
+                            </span>
+                            <span className="text-[11px] text-teal-700 dark:text-teal-400 font-mono">
+                              [{asg.teacherCode}] {teacherPhone ? `· ${teacherPhone}` : ''}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            {isCompleted ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 tabular-nums">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>{num(enteredCount)}/{num(totalStudents)} সম্পন্ন</span>
+                              </span>
+                            ) : isNotStarted ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800 tabular-nums">
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>০/{num(totalStudents)} বাকি (শুরু হয়নি)</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 tabular-nums">
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>{num(enteredCount)}/{num(totalStudents)} আংশিক</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center tabular-nums">
+                            <div className="w-16 bg-slate-200 dark:bg-slate-700 rounded-full h-2 mx-auto overflow-hidden">
+                              <div
+                                className={`h-full ${
+                                  isCompleted
+                                    ? 'bg-emerald-500'
+                                    : isPartial
+                                    ? 'bg-amber-500'
+                                    : 'bg-rose-500'
+                                }`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-1 block">
+                              {num(pct)}%
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {isCompleted ? (
+                              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                                ✓ সম্পন্ন
+                              </span>
+                            ) : (
+                              <a
+                                href={whatsAppUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-2xs transition-colors cursor-pointer"
+                                title="শিক্ষককে হোয়াটসঅ্যাপে রিমাইন্ডার মেসেজ পাঠান"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                <span>হোয়াটসঅ্যাপ তাগিদ</span>
+                              </a>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

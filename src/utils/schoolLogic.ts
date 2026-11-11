@@ -239,6 +239,14 @@ export function calculateGradeAndGpa(
 }
 
 /**
+ * Normalizes a teacherCode for comparison (e.g., "R.D." -> "RD", "A.D." -> "AD").
+ */
+export function normalizeTeacherCodeCompareKey(code: string | null | undefined): string {
+  if (!code) return '';
+  return code.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+/**
  * Checks whether a user has permission to manage Attendance & Student Roster for a ClassSection.
  */
 export function canManageClassRosterAndAttendance(
@@ -247,7 +255,10 @@ export function canManageClassRosterAndAttendance(
 ): boolean {
   if (!user || user.status !== 'active' || !classSection) return false;
   if (user.role === 'admin') return true;
-  return classSection.classTeacherUid === user.uid;
+  if (classSection.classTeacherUid === user.uid) return true;
+  const userCode = normalizeTeacherCodeCompareKey(user.teacherCode);
+  const csCode = normalizeTeacherCodeCompareKey(classSection.classTeacherCode);
+  return Boolean(userCode && csCode && userCode === csCode);
 }
 
 /**
@@ -259,7 +270,173 @@ export function canManageSubjectMarks(
 ): boolean {
   if (!user || user.status !== 'active' || !assignment) return false;
   if (user.role === 'admin') return true;
-  return assignment.teacherUid === user.uid;
+  if (assignment.teacherUid === user.uid) return true;
+  const userCode = normalizeTeacherCodeCompareKey(user.teacherCode);
+  const asgCode = normalizeTeacherCodeCompareKey(assignment.teacherCode);
+  return Boolean(userCode && asgCode && userCode === asgCode);
+}
+
+/**
+ * Returns true if the email is a seeded placeholder (@automatapro.com, @aths.edu.bd, or @aths.gmail.com).
+ */
+export function isPlaceholderTeacherEmail(email: string | null | undefined): boolean {
+  if (!email) return true;
+  const lower = email.trim().toLowerCase();
+  return (
+    lower.endsWith('@automatapro.com') ||
+    lower.endsWith('@aths.edu.bd') ||
+    lower.endsWith('@aths.gmail.com')
+  );
+}
+
+/**
+ * Finds an existing teacher profile by exact UID or case-insensitive email match.
+ */
+export function findMatchingTeacherProfileByEmailOrUid(
+  users: UserProfile[],
+  email: string | null | undefined,
+  uid?: string | null
+): UserProfile | null {
+  if (uid) {
+    const byUid = users.find((u) => u.uid === uid);
+    if (byUid) return byUid;
+  }
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return null;
+  return users.find((u) => u.email.trim().toLowerCase() === cleanEmail) || null;
+}
+
+/**
+ * Links a signed-in Google user's UID (targetUid) to an existing seeded teacher profile (sourceUid),
+ * preserving teacherCode, role, Class Teacher sections, and Subject Assignments.
+ */
+export function mergeAndLinkTeacherProfileUid(params: {
+  sourceUid: string;
+  targetUid: string;
+  targetEmail?: string;
+  targetPhotoURL?: string;
+  users: UserProfile[];
+  classSections: ClassSection[];
+  subjectAssignments: SubjectAssignment[];
+  nowIso?: string;
+}): {
+  linkedProfile: UserProfile | null;
+  updatedUsers: UserProfile[];
+  updatedClassSections: ClassSection[];
+  updatedSubjectAssignments: SubjectAssignment[];
+} {
+  const {
+    sourceUid,
+    targetUid,
+    targetEmail,
+    targetPhotoURL,
+    users,
+    classSections,
+    subjectAssignments,
+    nowIso = new Date().toISOString(),
+  } = params;
+
+  const sourceProfile = users.find((u) => u.uid === sourceUid);
+  const targetProfile = users.find((u) => u.uid === targetUid);
+
+  if (!sourceProfile) {
+    return {
+      linkedProfile: targetProfile || null,
+      updatedUsers: users,
+      updatedClassSections: classSections,
+      updatedSubjectAssignments: subjectAssignments,
+    };
+  }
+
+  const resolvedEmail = (
+    targetEmail ||
+    (targetProfile && !isPlaceholderTeacherEmail(targetProfile.email)
+      ? targetProfile.email
+      : sourceProfile.email)
+  )
+    .trim()
+    .toLowerCase()
+    .slice(0, 160);
+
+  const isSuperAdmin = resolvedEmail === SUPER_ADMIN_EMAIL;
+  const resolvedRole: UserRole =
+    isSuperAdmin || sourceProfile.role === 'admin' || targetProfile?.role === 'admin'
+      ? 'admin'
+      : 'teacher';
+
+  const linkedProfile: UserProfile = {
+    uid: targetUid,
+    name: sourceProfile.name.slice(0, 120),
+    email: resolvedEmail,
+    photoURL: (targetPhotoURL || targetProfile?.photoURL || sourceProfile.photoURL || '').slice(
+      0,
+      500
+    ),
+    role: resolvedRole,
+    teacherCode: sourceProfile.teacherCode.trim().toUpperCase().slice(0, 12) || 'TCH',
+    status: sourceProfile.status,
+    designation: sourceProfile.designation.slice(0, 80),
+    createdAt: sourceProfile.createdAt || targetProfile?.createdAt || nowIso,
+    updatedAt: nowIso,
+  };
+
+  // Replace sourceProfile and targetProfile with the unified linkedProfile
+  const updatedUsers: UserProfile[] = [];
+  let inserted = false;
+  for (const u of users) {
+    if (u.uid === sourceUid || u.uid === targetUid) {
+      if (!inserted) {
+        updatedUsers.push(linkedProfile);
+        inserted = true;
+      }
+    } else {
+      updatedUsers.push(u);
+    }
+  }
+  if (!inserted) {
+    updatedUsers.push(linkedProfile);
+  }
+
+  const sourceCodeKey = normalizeTeacherCodeCompareKey(sourceProfile.teacherCode);
+
+  const updatedClassSections = classSections.map((cs) => {
+    const csCodeKey = normalizeTeacherCodeCompareKey(cs.classTeacherCode);
+    if (
+      cs.classTeacherUid === sourceUid ||
+      (sourceCodeKey && csCodeKey === sourceCodeKey)
+    ) {
+      return {
+        ...cs,
+        classTeacherUid: targetUid,
+        classTeacherName: linkedProfile.name,
+        classTeacherCode: linkedProfile.teacherCode,
+      };
+    }
+    return cs;
+  });
+
+  const updatedSubjectAssignments = subjectAssignments.map((asg) => {
+    const asgCodeKey = normalizeTeacherCodeCompareKey(asg.teacherCode);
+    if (
+      asg.teacherUid === sourceUid ||
+      (sourceCodeKey && asgCodeKey === sourceCodeKey)
+    ) {
+      return {
+        ...asg,
+        teacherUid: targetUid,
+        teacherName: linkedProfile.name,
+        teacherCode: linkedProfile.teacherCode,
+      };
+    }
+    return asg;
+  });
+
+  return {
+    linkedProfile,
+    updatedUsers,
+    updatedClassSections,
+    updatedSubjectAssignments,
+  };
 }
 
 /**

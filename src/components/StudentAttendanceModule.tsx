@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Calendar,
+  Check,
   CheckCircle2,
+  Copy,
   Download,
   Printer,
   RotateCcw,
@@ -55,6 +57,7 @@ export const StudentAttendanceModule: React.FC = () => {
   const [lateRollSet, setLateRollSet] = useState<Set<number>>(new Set());
   const [saveMessage, setSaveMessage] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [copiedAbsentees, setCopiedAbsentees] = useState(false);
 
   // Summary Dashboard state
   const [cutoffDate, setCutoffDate] = useState<string>('2026-12-31');
@@ -303,222 +306,168 @@ export const StudentAttendanceModule: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  return (
-    <div className="space-y-5 pb-24">
-      {/* Top Sub-Navigation & Class/Date Context Controls */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          {/* Segmented Control Tabs */}
-          <div className="inline-flex rounded-xl border border-slate-200 dark:border-slate-800 p-1 bg-slate-100/80 dark:bg-slate-950 self-start">
-            <button
-              type="button"
-              onClick={() => setActiveSubTab('take-attendance')}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                activeSubTab === 'take-attendance'
-                  ? 'bg-teal-700 text-white shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              দৈনিক হাজিরা গ্রহণ (Take Attendance)
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSubTab('summary-dashboard')}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                activeSubTab === 'summary-dashboard'
-                  ? 'bg-teal-700 text-white shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              মাসিক ড্যাশবোর্ড ও রিপোর্ট (Analytics & Export)
-            </button>
-          </div>
+  const handleCopyAbsentees = async () => {
+    if (!activeSection) return;
+    const absentStudentsList = classStudents
+      .filter((s) => absentRollSet.has(s.roll))
+      .map((s) => `• রোল ${num(s.roll)}: ${s.name}`)
+      .join('\n');
 
-          {/* Class/Section & Date Selectors */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor="att-class-select"
-                className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap"
+    const summaryText = [
+      `🏫 আবুতোরাব বহুমুখী উচ্চ বিদ্যালয়`,
+      `📅 তারিখ: ${selectedDate}`,
+      `📌 শ্রেণি: ${activeSection.className} — শাখা: ${activeSection.section}`,
+      `👥 মোট শিক্ষার্থী: ${num(totalStudentsCount)} জন`,
+      `✅ উপস্থিত: ${num(presentCount)} জন (${num(dailyPercentage)}%)`,
+      `❌ অনুপস্থিত: ${num(absentCount)} জন`,
+      absentCount > 0
+        ? `\n📋 অনুপস্থিত শিক্ষার্থীদের তালিকা:\n${absentStudentsList}`
+        : '\n🎉 আলহামদুলিল্লাহ, আজ ক্লাসে সবাই উপস্থিত!',
+    ].join('\n');
+
+    try {
+      await navigator.clipboard.writeText(summaryText);
+      setCopiedAbsentees(true);
+      setTimeout(() => setCopiedAbsentees(false), 3000);
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <div className="space-y-4 pb-28">
+      {/* Single Compact Sticky Toolbar */}
+      <div className="sticky top-14 z-20 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2.5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Left: Sub-tabs & Selectors */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Sub-tab Pills */}
+            <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-800 p-0.5 bg-slate-100 dark:bg-slate-950">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('take-attendance')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                  activeSubTab === 'take-attendance'
+                    ? 'bg-teal-700 text-white shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
               >
-                শ্রেণি ও শাখা:
-              </label>
-              <select
-                id="att-class-select"
-                value={selectedAttendanceClassSectionId}
-                onChange={(e) => setSelectedAttendanceClassSectionId(e.target.value)}
-                className="text-xs font-semibold rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-3 py-2"
+                দৈনিক হাজিরা
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('summary-dashboard')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                  activeSubTab === 'summary-dashboard'
+                    ? 'bg-teal-700 text-white shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
               >
-                {yearSections.map((cs) => {
-                  const hasAccess = canManageClassRosterAndAttendance(currentUser, cs);
-                  return (
-                    <option key={cs.id} value={cs.id}>
-                      {cs.className} - শাখা {cs.section} (CT: {cs.classTeacherCode})
-                      {hasAccess ? ' ✓' : ' [View Only]'}
-                    </option>
-                  );
-                })}
-              </select>
+                মাসিক রিপোর্ট
+              </button>
             </div>
 
-            {activeSubTab === 'take-attendance' ? (
-              <div className="flex items-center gap-2">
-                <label
-                  htmlFor="att-date-input"
-                  className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap"
-                >
-                  তারিখ:
-                </label>
-                <input
-                  id="att-date-input"
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="text-xs font-semibold rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-3 py-2 tabular-nums"
-                />
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <label
-                  htmlFor="att-cutoff-input"
-                  className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap"
-                >
-                  হিসাবের শেষ তারিখ:
-                </label>
-                <input
-                  id="att-cutoff-input"
-                  type="date"
-                  value={cutoffDate}
-                  onChange={(e) => setCutoffDate(e.target.value)}
-                  className="text-xs font-semibold rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-3 py-2 tabular-nums"
-                />
-              </div>
-            )}
-          </div>
-        </div>
+            {/* Class / Section Pill */}
+            <select
+              id="att-class-select"
+              value={selectedAttendanceClassSectionId}
+              onChange={(e) => setSelectedAttendanceClassSectionId(e.target.value)}
+              className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500"
+            >
+              {yearSections.map((cs) => {
+                const hasAccess = canManageClassRosterAndAttendance(currentUser, cs);
+                return (
+                  <option key={cs.id} value={cs.id}>
+                    {cs.className} ({cs.section}) {hasAccess ? '✓' : '[ভিউ]'}
+                  </option>
+                );
+              })}
+            </select>
 
-        {/* Access Control Status Strip */}
-        <div
-          className={`rounded-xl px-4 py-2.5 text-xs flex flex-wrap items-center justify-between gap-2 border ${
-            canEditSelectedClass
-              ? 'bg-teal-50/70 dark:bg-teal-950/30 border-teal-200 dark:border-teal-900/60 text-teal-900 dark:text-teal-200'
-              : 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200'
-          }`}
-        >
-          <div>
-            {canEditSelectedClass ? (
-              <span>
-                <strong>হাজিরা গ্রহণের অনুমতি সক্রিয়:</strong> আপনি{' '}
-                <strong>
-                  {activeSection?.className} ({activeSection?.section})
-                </strong>{' '}
-                শাখার {isAdmin ? 'অ্যাডমিন (সকল শাখা উন্মুক্ত)' : 'নির্ধারিত শ্রেণি শিক্ষক'}।
-              </span>
+            {/* Date Picker Pill */}
+            {activeSubTab === 'take-attendance' ? (
+              <input
+                id="att-date-input"
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 tabular-nums focus:ring-1 focus:ring-teal-500"
+              />
             ) : (
-              <span>
-                <strong>শুধুমাত্র দেখার অনুমতি (Read-Only):</strong> শুধুমাত্র নির্ধারিত শ্রেণি শিক্ষক (
-                <strong>
-                  {activeSection?.classTeacherName} [{activeSection?.classTeacherCode}]
-                </strong>
-                ) অথবা অ্যাডমিন এই শাখার হাজিরা পরিবর্তন করতে পারবেন।
+              <input
+                id="att-cutoff-input"
+                type="date"
+                value={cutoffDate}
+                onChange={(e) => setCutoffDate(e.target.value)}
+                title="হিসাবের শেষ তারিখ"
+                className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 tabular-nums focus:ring-1 focus:ring-teal-500"
+              />
+            )}
+
+            {!canEditSelectedClass && (
+              <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 px-2 py-1 rounded-md">
+                রিড-অনলি
               </span>
             )}
           </div>
-          <div className="font-mono text-[11px] tabular-nums">
-            {existingRecordForDate ? (
-              <span className="text-emerald-700 dark:text-emerald-400 font-bold">
-                ● সংরক্ষিত ({selectedDate})
-              </span>
-            ) : (
-              <span className="text-slate-500 dark:text-slate-400">
-                ○ নতুন সেশন ({selectedDate})
-              </span>
+
+          {/* Right: Quick Counters, Search & Mark All */}
+          <div className="flex flex-wrap items-center gap-2">
+            {activeSubTab === 'take-attendance' && (
+              <>
+                <div className="flex items-center gap-1.5 text-xs font-semibold tabular-nums">
+                  <span className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                    মোট: {num(totalStudentsCount)}
+                  </span>
+                  <span className="px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-800/80">
+                    উপস্থিত: {num(presentCount)} ({num(dailyPercentage)}%)
+                  </span>
+                  <span className="px-2 py-1 rounded-md bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200/80 dark:border-rose-800/80">
+                    অনুপস্থিত: {num(absentCount)}
+                  </span>
+                </div>
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="রোল বা নাম..."
+                    className="text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white pl-7 pr-2.5 py-1.5 w-32 sm:w-40 focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!canEditSelectedClass}
+                  onClick={handleMarkAllPresent}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors flex items-center gap-1 cursor-pointer"
+                  title="সবাই উপস্থিত চিহ্নিত করুন"
+                >
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">সবাই উপস্থিত</span>
+                </button>
+
+                {existingRecordForDate && canEditSelectedClass && (
+                  <button
+                    type="button"
+                    onClick={handleResetDayRecord}
+                    title="রিসেট"
+                    className="p-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
       </div>
 
-      {/* SUB-TAB 1: DAILY ATTENDANCE TAKING UI (ClassRoll Experience) */}
+      {/* SUB-TAB 1: DAILY ATTENDANCE TAKING UI */}
       {activeSubTab === 'take-attendance' && (
         <div className="space-y-4">
-          {/* Sticky Top Summary Bar */}
-          <div className="sticky top-[61px] z-20 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border border-teal-500/30 dark:border-teal-700/50 rounded-2xl p-3.5 sm:p-4 shadow-md flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
-              <div className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <span className="text-[11px] text-slate-500 dark:text-slate-400 block leading-none">
-                  মোট (Total)
-                </span>
-                <span className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tabular-nums">
-                  {num(totalStudentsCount)}
-                </span>
-              </div>
-
-              <div className="px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800">
-                <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold block leading-none">
-                  উপস্থিত (Present)
-                </span>
-                <span className="text-base sm:text-lg font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
-                  {num(presentCount)}{' '}
-                  <span className="text-xs font-normal">({num(dailyPercentage)}%)</span>
-                </span>
-              </div>
-
-              <div className="px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800">
-                <span className="text-[11px] text-rose-700 dark:text-rose-300 font-semibold block leading-none">
-                  অনুপস্থিত (Absent)
-                </span>
-                <span className="text-base sm:text-lg font-bold text-rose-600 dark:text-rose-400 tabular-nums">
-                  {num(absentCount)}
-                </span>
-              </div>
-            </div>
-
-            {/* Quick Action Buttons */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="রোল বা নাম খুঁজুন..."
-                  className="text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white pl-8 pr-3 py-2 w-40 sm:w-48"
-                />
-              </div>
-
-              <button
-                type="button"
-                disabled={!canEditSelectedClass}
-                onClick={handleMarkAllPresent}
-                className="px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <UserCheck className="w-4 h-4" />
-                <span>সবাই উপস্থিত (Mark All Present)</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={!canEditSelectedClass}
-                onClick={handleMarkAllAbsent}
-                className="hidden sm:inline-flex px-3 py-2 text-xs font-semibold rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 disabled:opacity-40 transition-colors items-center gap-1 cursor-pointer"
-              >
-                <UserX className="w-3.5 h-3.5" />
-                <span>Mark All Absent</span>
-              </button>
-
-              {existingRecordForDate && canEditSelectedClass && (
-                <button
-                  type="button"
-                  onClick={handleResetDayRecord}
-                  className="px-2.5 py-2 text-xs font-medium rounded-xl border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1 cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Reset</span>
-                </button>
-              )}
-            </div>
-          </div>
-
           {saveMessage && (
             <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 px-4 py-3 text-xs font-semibold text-emerald-900 dark:text-emerald-200 flex items-center gap-2 shadow-2xs">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -746,9 +695,9 @@ export const StudentAttendanceModule: React.FC = () => {
           </div>
 
           {/* Sticky Bottom Floating Action Bar */}
-          <div className="no-print fixed bottom-16 md:bottom-4 left-0 right-0 md:left-64 z-30 px-4 pointer-events-none">
-            <div className="max-w-4xl mx-auto backdrop-blur-md bg-slate-900/95 dark:bg-slate-800/95 text-white rounded-2xl p-3 sm:px-5 sm:py-3.5 shadow-xl border border-teal-500/40 flex items-center justify-between gap-3 pointer-events-auto">
-              <div className="text-xs sm:text-sm flex items-center gap-3 tabular-nums">
+          <div className="no-print fixed bottom-20 lg:bottom-4 left-0 right-0 lg:left-60 z-30 px-4 pointer-events-none">
+            <div className="max-w-4xl mx-auto backdrop-blur-md bg-slate-900/95 dark:bg-slate-800/95 text-white rounded-2xl p-3 sm:px-5 sm:py-3.5 shadow-xl border border-teal-500/40 flex flex-wrap items-center justify-between gap-3 pointer-events-auto">
+              <div className="text-xs sm:text-sm flex items-center gap-2 sm:gap-3 tabular-nums">
                 <span className="font-bold text-teal-300">
                   {activeSection?.className} ({activeSection?.section})
                 </span>
@@ -762,15 +711,37 @@ export const StudentAttendanceModule: React.FC = () => {
                 </span>
               </div>
 
-              <button
-                type="button"
-                disabled={!canEditSelectedClass || totalStudentsCount === 0}
-                onClick={handleSaveAndSync}
-                className="px-4 sm:px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 text-slate-950 font-extrabold text-xs sm:text-sm flex items-center gap-2 shadow-md disabled:opacity-40 cursor-pointer transition-all"
-              >
-                <Save className="w-4 h-4" />
-                <span>হাজিরা সংরক্ষণ করুন (Save Attendance)</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyAbsentees}
+                  disabled={totalStudentsCount === 0}
+                  className="px-3 sm:px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40"
+                  title="হোয়াটসঅ্যাপ বা মেসেঞ্জার গ্রুপের জন্য অনুপস্থিত তালিকা কপি করুন"
+                >
+                  {copiedAbsentees ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-300 font-bold">কপি হয়েছে!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-teal-400" />
+                      <span>অনুপস্থিত তালিকা কপি</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!canEditSelectedClass || totalStudentsCount === 0}
+                  onClick={handleSaveAndSync}
+                  className="px-4 sm:px-5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 text-slate-950 font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-md disabled:opacity-40 cursor-pointer transition-all"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>হাজিরা সংরক্ষণ</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
