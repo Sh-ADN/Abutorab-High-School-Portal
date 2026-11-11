@@ -15,7 +15,10 @@ import {
   X,
 } from 'lucide-react';
 import { useSchool } from '../context/SchoolContext';
-import { canManageClassRosterAndAttendance } from '../utils/schoolLogic';
+import {
+  canManageClassRosterAndAttendance,
+  isPrivilegedReviewerUser,
+} from '../utils/schoolLogic';
 import {
   computeClassAttendanceAnalytics,
   formatCutoffDisplay,
@@ -69,7 +72,7 @@ export const StudentAttendanceModule: React.FC = () => {
 
   if (!currentUser) return null;
 
-  const isAdmin = currentUser.role === 'admin';
+  const isReviewer = isPrivilegedReviewerUser(currentUser);
   const activeYear = academicYears.find((y) => y.id === selectedAcademicYearId);
 
   // Sections in active academic year
@@ -78,7 +81,8 @@ export const StudentAttendanceModule: React.FC = () => {
     [classSections, selectedAcademicYearId]
   );
 
-  // Sections where current user is permitted to take/edit attendance
+  // Strict Attendance Access: Only the assigned Class Teacher of a specific class-section
+  // (plus super_admin, main_admin, head_teacher, and asst_head_teacher) can view, take, and submit attendance for that section.
   const permittedSections = useMemo(
     () =>
       yearSections.filter((cs) => canManageClassRosterAndAttendance(currentUser, cs)),
@@ -87,24 +91,21 @@ export const StudentAttendanceModule: React.FC = () => {
 
   useEffect(() => {
     if (
-      !selectedAttendanceClassSectionId ||
-      !yearSections.some((cs) => cs.id === selectedAttendanceClassSectionId)
+      permittedSections.length > 0 &&
+      (!selectedAttendanceClassSectionId ||
+        !permittedSections.some((cs) => cs.id === selectedAttendanceClassSectionId))
     ) {
-      const preferred = permittedSections[0]?.id || yearSections[0]?.id || '';
-      if (preferred) {
-        setSelectedAttendanceClassSectionId(preferred);
-      }
+      setSelectedAttendanceClassSectionId(permittedSections[0].id);
     }
   }, [
     selectedAttendanceClassSectionId,
     permittedSections,
-    yearSections,
     setSelectedAttendanceClassSectionId,
   ]);
 
   const activeSection = useMemo(
-    () => yearSections.find((cs) => cs.id === selectedAttendanceClassSectionId) || null,
-    [yearSections, selectedAttendanceClassSectionId]
+    () => permittedSections.find((cs) => cs.id === selectedAttendanceClassSectionId) || null,
+    [permittedSections, selectedAttendanceClassSectionId]
   );
 
   const canEditSelectedClass = useMemo(
@@ -334,6 +335,25 @@ export const StudentAttendanceModule: React.FC = () => {
     }
   };
 
+  if (permittedSections.length === 0) {
+    return (
+      <div
+        data-testid="attendance-strict-lock-card"
+        className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/60 rounded-2xl p-8 text-center space-y-3"
+      >
+        <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-950/70 border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-600 dark:text-amber-400 mx-auto">
+          <UserX className="w-6 h-6" />
+        </div>
+        <h2 className="text-base font-bold text-slate-900 dark:text-white">
+          হাজিরা গ্রহণ ও পরিদর্শন শুধুমাত্র নির্ধারিত শ্রেণি শিক্ষকের জন্য সংরক্ষিত
+        </h2>
+        <p className="text-xs text-slate-600 dark:text-slate-400 max-w-lg mx-auto leading-relaxed">
+          বিদ্যালয়ের নিয়ম অনুযায়ী শুধুমাত্র সংশ্লিষ্ট শাখার নির্ধারিত শ্রেণি শিক্ষক (১ম পিরিয়ডের শিক্ষক), প্রধান শিক্ষক, সহকারী প্রধান শিক্ষক এবং অ্যাডমিন হাজিরা গ্রহণ ও জমা দিতে পারবেন। আপনার প্রোফাইল ({currentUser.nameBn || currentUser.name} [{currentUser.teacherCode}]) বর্তমানে কোনো শাখার শ্রেণি শিক্ষক হিসেবে নিযুক্ত নয়।
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 pb-28">
       {/* Single Compact Sticky Toolbar */}
@@ -367,21 +387,18 @@ export const StudentAttendanceModule: React.FC = () => {
               </button>
             </div>
 
-            {/* Class / Section Pill */}
+            {/* Class / Section Pill (Strictly filtered to permittedSections) */}
             <select
               id="att-class-select"
               value={selectedAttendanceClassSectionId}
               onChange={(e) => setSelectedAttendanceClassSectionId(e.target.value)}
               className="text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500"
             >
-              {yearSections.map((cs) => {
-                const hasAccess = canManageClassRosterAndAttendance(currentUser, cs);
-                return (
-                  <option key={cs.id} value={cs.id}>
-                    {cs.className} ({cs.section}) {hasAccess ? '✓' : '[ভিউ]'}
-                  </option>
-                );
-              })}
+              {permittedSections.map((cs) => (
+                <option key={cs.id} value={cs.id}>
+                  {cs.className} ({cs.section}) — {isReviewer ? `CT: ${cs.classTeacherCode}` : 'শ্রেণি শিক্ষক ✓'}
+                </option>
+              ))}
             </select>
 
             {/* Date Picker Pill */}

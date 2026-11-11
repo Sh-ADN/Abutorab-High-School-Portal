@@ -23,6 +23,7 @@ import { AdminAcademicPanel } from './AdminAcademicPanel';
 import { StudentRosterPanel } from './StudentRosterPanel';
 import { NoticeRecord } from '../types/school';
 import { buildWhatsAppUrl, PUBLIC_TEACHERS_DIRECTORY } from '../data/schoolWebsiteData';
+import { isFullAdminUser } from '../utils/schoolLogic';
 
 export type AdminTabId =
   | 'teachers-roles'
@@ -75,11 +76,11 @@ export const AdminControlCenter: React.FC<{
   const [noticeContent, setNoticeContent] = useState('');
   const [noticeBanner, setNoticeBanner] = useState('');
 
-  if (currentUser?.role !== 'admin') {
+  if (!isFullAdminUser(currentUser)) {
     return (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center">
         <p className="text-sm font-bold text-rose-600 dark:text-rose-400">
-          শুধুমাত্র অ্যাডমিন (Admin) প্যানেলটি ব্যবহার করতে পারবেন।
+          শুধুমাত্র সুপার অ্যাডমিন (Super Admin) ও মেইন অ্যাডমিন (Main Admin) প্যানেলটি ব্যবহার করতে পারবেন।
         </p>
       </div>
     );
@@ -122,7 +123,7 @@ export const AdminControlCenter: React.FC<{
       isImportant: noticeIsImportant,
       summary: noticeSummary || noticeTitle,
       content: noticeContent || noticeSummary || noticeTitle,
-      publishedBy: `${currentUser.name} (${currentUser.designation})`,
+      publishedBy: `${currentUser?.name || 'Admin'} (${currentUser?.designation || 'Admin'})`,
     });
     setNoticeBanner(
       editingNoticeId

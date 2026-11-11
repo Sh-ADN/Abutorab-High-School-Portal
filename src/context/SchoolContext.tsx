@@ -23,6 +23,7 @@ import {
   ParsedStudentRow,
   RoutineRecord,
   SchoolClassName,
+  StaffType,
   Student,
   StudentGroup,
   SubjectAssignment,
@@ -42,20 +43,35 @@ import {
   SEED_USERS,
 } from '../data/seedData';
 import {
-  calculateGradeAndGpa,
+  canEditTargetTeacherProfile,
+  canManageClassRosterAndAttendance,
+  canManageSubjectMarks,
   deriveTeacherCode,
   findMatchingTeacherProfileByEmailOrUid,
   formatNumeral,
+  isAssignedClassTeacherForSection,
+  isFullAdminUser,
+  isPrivilegedReviewerUser,
+  isSuperAdminUser,
   mergeAndLinkTeacherProfileUid,
+  normalizeAbbr,
   resolveInitialUserRole,
   sanitizeFirestoreId,
   sanitizeStudentPayload,
+  sortTeachersByHierarchy,
 } from '../utils/schoolLogic';
 
 import { parseAbsentRollsSet, serializeAbsentRolls } from '../utils/attendanceAnalytics';
 import { evaluateSubjectMarkComponents, resolveSubjectSpec } from '../utils/marksCatalogAndLogic';
-import { SEED_ROUTINE_RECORDS } from '../utils/routineAndStatsLogic';
-import { PUBLIC_TEACHERS_DIRECTORY, SEED_NOTICES } from '../data/schoolWebsiteData';
+import {
+  deriveClassTeachersAndSubjectAssignmentsFromRoutine,
+  SEED_ROUTINE_RECORDS,
+} from '../utils/routineAndStatsLogic';
+import {
+  PUBLIC_STAFF_DIRECTORY,
+  PUBLIC_TEACHERS_DIRECTORY,
+  SEED_NOTICES,
+} from '../data/schoolWebsiteData';
 
 export type WorkspaceView =
   | 'teacher-dashboard'
@@ -69,9 +85,32 @@ export type WorkspaceView =
   | 'admin-matrix'
   | 'student-roster';
 
+export interface TeacherStaffCrudInput {
+  name: string;
+  nameBn?: string;
+  email?: string;
+  teacherCode?: string;
+  routineAbbreviation?: string;
+  designation?: string;
+  staffType?: StaffType;
+  subject?: string;
+  qualification?: string;
+  indexNo?: string;
+  joiningDate?: string;
+  phone?: string;
+  photoURL?: string;
+  role?: UserRole;
+  status?: AccountStatus;
+  isSenior?: boolean;
+  serial?: number;
+}
+
 interface SchoolContextValue {
   // Auth & User State
-  currentUser: UserProfile | null;
+  currentUser: UserProfile | null; // Effective user (switches when View As is active)
+  realAuthUser: UserProfile | null; // Actual logged-in user (Super Admin / Main Admin)
+  viewAsTeacherUid: string | null;
+  setViewAsTeacherUid: (uid: string | null) => void;
   authLoading: boolean;
   authError: string | null;
   isFirebaseAuthenticated: boolean;
@@ -119,26 +158,11 @@ interface SchoolContextValue {
   holidays: string[];
   toggleHolidayDate: (dateStr: string) => void;
 
-  // Admin: Teacher Management
-  updateUserRoleAndStatus: (
-    uid: string,
-    updates: {
-      role?: UserRole;
-      status?: AccountStatus;
-      teacherCode?: string;
-      designation?: string;
-      name?: string;
-      email?: string;
-    }
-  ) => Promise<void>;
+  // Admin: Teacher & Staff Management
+  updateUserRoleAndStatus: (uid: string, updates: Partial<TeacherStaffCrudInput>) => Promise<void>;
   linkUserToTeacherProfile: (sourceTeacherUid: string, targetGoogleUid: string) => Promise<void>;
-  createTeacherAccount: (input: {
-    name: string;
-    email: string;
-    teacherCode?: string;
-    designation?: string;
-    role?: UserRole;
-  }) => Promise<void>;
+  createTeacherAccount: (input: TeacherStaffCrudInput) => Promise<void>;
+  deleteTeacherAccount: (uid: string) => Promise<void>;
   seedDirectoryTeachers: () => Promise<number>;
 
   // Admin: Academic Structure
@@ -163,8 +187,12 @@ interface SchoolContextValue {
   }) => Promise<void>;
   deleteClassSection: (classSectionId: string) => Promise<void>;
 
-  // Admin: Assignment Matrix
-  assignClassTeacher: (classSectionId: string, teacherUid: string) => Promise<void>;
+  // Admin: Assignment Matrix & Routine Sync
+  assignClassTeacher: (
+    classSectionId: string,
+    teacherUid: string,
+    isManualOverride?: boolean
+  ) => Promise<void>;
   createOrUpdateSubjectAssignment: (input: {
     id?: string;
     academicYearId: string;
@@ -173,8 +201,20 @@ interface SchoolContextValue {
     subjectName: string;
     teacherUid: string;
     maxMarks: number;
+    isManualOverride?: boolean;
   }) => Promise<void>;
   deleteSubjectAssignment: (assignmentId: string) => Promise<void>;
+  syncAssignmentsFromRoutineNow: () => Promise<{
+    updatedSectionsCount: number;
+    updatedSubjectsCount: number;
+  }>;
+
+  // Multi-Stage Marks Submission & Approval Workflow
+  submitSubjectMarksToClassTeacher: (assignmentId: string, termId: string) => Promise<void>;
+  unlockSubjectMarksToDraft: (assignmentId: string, termId: string) => Promise<void>;
+  submitSectionResultsForApproval: (classSectionId: string, termId: string) => Promise<void>;
+  approveSectionResults: (classSectionId: string, termId: string) => Promise<void>;
+  unlockSectionResultsToDraft: (classSectionId: string, termId: string) => Promise<void>;
 
   // Student Roster (Admin & Class Teacher)
   addSingleStudent: (input: {
@@ -193,7 +233,9 @@ interface SchoolContextValue {
   ) => Promise<number>;
   updateStudentRecord: (
     studentId: string,
-    updates: Partial<Pick<Student, 'roll' | 'name' | 'group' | 'optionalSubject' | 'guardianPhone' | 'status'>>
+    updates: Partial<
+      Pick<Student, 'roll' | 'name' | 'group' | 'optionalSubject' | 'guardianPhone' | 'status'>
+    >
   ) => Promise<void>;
   deleteStudentRecord: (studentId: string) => Promise<void>;
 
@@ -246,12 +288,19 @@ interface SchoolContextValue {
 
 const SchoolContext = createContext<SchoolContextValue | null>(null);
 
+const INITIAL_DERIVED = deriveClassTeachersAndSubjectAssignmentsFromRoutine({
+  routineRecords: SEED_ROUTINE_RECORDS,
+  classSections: SEED_CLASS_SECTIONS,
+  teachers: SEED_USERS,
+  existingAssignments: SEED_SUBJECT_ASSIGNMENTS,
+  academicYearId: 'ay_2026',
+});
+
 export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [fbUser, setFbUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Support ?autostart=1 for automated testing or quick preview
   const initialAutostart = useMemo(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
@@ -261,6 +310,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [sandboxUid, setSandboxUid] = useState<string | null>(
     initialAutostart ? 'usr_admin_ad' : null
   );
+  const [viewAsTeacherUid, setViewAsTeacherUid] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('teacher-dashboard');
   const [showPublicWebsite, setShowPublicWebsite] = useState<boolean>(false);
 
@@ -308,13 +358,16 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [numeralLocale]
   );
 
-  // Application Data State (Seeded locally and synced with Firestore when signed in via Firebase)
-  const [users, setUsers] = useState<UserProfile[]>(SEED_USERS);
+  // Application Data State
+  const [users, setUsers] = useState<UserProfile[]>(() => sortTeachersByHierarchy(SEED_USERS));
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>(SEED_ACADEMIC_YEARS);
   const [examTerms, setExamTerms] = useState<ExamTerm[]>(SEED_EXAM_TERMS);
-  const [classSections, setClassSections] = useState<ClassSection[]>(SEED_CLASS_SECTIONS);
-  const [subjectAssignments, setSubjectAssignments] =
-    useState<SubjectAssignment[]>(SEED_SUBJECT_ASSIGNMENTS);
+  const [classSections, setClassSections] = useState<ClassSection[]>(
+    INITIAL_DERIVED.updatedClassSections
+  );
+  const [subjectAssignments, setSubjectAssignments] = useState<SubjectAssignment[]>(
+    INITIAL_DERIVED.updatedSubjectAssignments
+  );
   const [students, setStudents] = useState<Student[]>(SEED_STUDENTS);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(SEED_ATTENDANCE);
   const [subjectMarks, setSubjectMarks] = useState<SubjectMarkRecord[]>(SEED_SUBJECT_MARKS);
@@ -326,6 +379,21 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [selectedAttendanceClassSectionId, setSelectedAttendanceClassSectionId] =
     useState<string>('');
   const [selectedMarksAssignmentId, setSelectedMarksAssignmentId] = useState<string>('');
+
+  // Automatically keep non-overridden Class Teachers (1st period) and Subject Assignments (majority days)
+  // synced whenever routineRecords or users change
+  useEffect(() => {
+    const derived = deriveClassTeachersAndSubjectAssignmentsFromRoutine({
+      routineRecords,
+      classSections,
+      teachers: users,
+      existingAssignments: subjectAssignments,
+      academicYearId: selectedAcademicYearId,
+    });
+    setClassSections(derived.updatedClassSections);
+    setSubjectAssignments(derived.updatedSubjectAssignments);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routineRecords, users, selectedAcademicYearId]);
 
   const [finePerAbsentDay, setFinePerAbsentDayState] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -368,7 +436,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, []);
 
-  // Firebase Auth listener & automatic user profile provisioning in Firestore users/{uid}
+  // Firebase Auth listener & automatic user profile provisioning in Firestore users/{uid} & teachers/{uid}
   useEffect(() => {
     const fallbackTimer = setTimeout(() => {
       setAuthLoading(false);
@@ -397,7 +465,6 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const derivedCode = deriveTeacherCode(displayName);
 
         if (!userSnap || !userSnap.exists()) {
-          // Check if an existing seeded/pre-registered teacher profile matches by email (case-insensitive)
           const matchedSeedProfile = findMatchingTeacherProfileByEmailOrUid(
             SEED_USERS,
             email,
@@ -423,49 +490,56 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const resolvedDesignation = (
             matchedSeedProfile?.designation ||
             (matchedDirEntry
-              ? `${matchedDirEntry.designation} — ${matchedDirEntry.subject}`
-              : initialRole === 'admin'
+              ? matchedDirEntry.designation
+              : initialRole === 'super_admin'
                 ? 'System Administrator & Senior Faculty'
                 : 'Assistant Teacher')
           ).slice(0, 80);
 
           const newProfile: UserProfile = {
+            ...(matchedSeedProfile || {}),
             uid: user.uid,
             name: resolvedName,
-            email: email || 'teacher@aths.edu.bd',
+            nameBn: matchedSeedProfile?.nameBn || matchedDirEntry?.name || resolvedName,
+            email: email || '',
             photoURL: (
               user.photoURL ||
               matchedSeedProfile?.photoURL ||
               matchedDirEntry?.photoUrl ||
               ''
             ).slice(0, 500),
-            role: initialRole,
+            role: email === 'ananneyadebnath@gmail.com' ? 'super_admin' : matchedSeedProfile?.role || initialRole,
             teacherCode: resolvedCode || 'TCH',
+            routineAbbreviation: matchedSeedProfile?.routineAbbreviation || resolvedCode || 'TCH',
             status: 'active',
+            staffType: matchedSeedProfile?.staffType || 'teacher',
             designation: resolvedDesignation,
+            subject: matchedSeedProfile?.subject || matchedDirEntry?.subject || '',
+            phone: matchedSeedProfile?.phone || matchedDirEntry?.phone || '',
             createdAt: nowIso,
             updatedAt: nowIso,
           };
           try {
             await setDoc(userDocRef, newProfile);
+            await setDoc(doc(db, 'teachers', user.uid), newProfile);
           } catch (err) {
             handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`);
           }
         } else {
-          // Ensure ananneyadebnath@gmail.com always has admin & active status
           const existingData = userSnap.data() as UserProfile;
           if (
             email === 'ananneyadebnath@gmail.com' &&
-            (existingData.role !== 'admin' || existingData.status !== 'active')
+            (existingData.role !== 'super_admin' || existingData.status !== 'active')
           ) {
             const updatedAdmin: UserProfile = {
               ...existingData,
-              role: 'admin',
+              role: 'super_admin',
               status: 'active',
               updatedAt: nowIso,
             };
             try {
               await setDoc(userDocRef, updatedAdmin);
+              await setDoc(doc(db, 'teachers', user.uid), updatedAdmin);
             } catch (err) {
               handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
             }
@@ -485,11 +559,30 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     if (!fbUser) return;
 
+    const unsubTeachers = onSnapshot(
+      collection(db, 'teachers'),
+      (snap) => {
+        if (!snap.empty) {
+          const list = snap.docs.map((d) => d.data() as UserProfile);
+          setUsers(sortTeachersByHierarchy(list));
+        }
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'teachers')
+    );
+
     const unsubUsers = onSnapshot(
       collection(db, 'users'),
       (snap) => {
         if (!snap.empty) {
-          setUsers(snap.docs.map((d) => d.data() as UserProfile));
+          setUsers((prev) => {
+            const byUid = new Map<string, UserProfile>();
+            prev.forEach((u) => byUid.set(u.uid, u));
+            snap.docs.forEach((d) => {
+              const u = d.data() as UserProfile;
+              byUid.set(u.uid, { ...(byUid.get(u.uid) || {}), ...u });
+            });
+            return sortTeachersByHierarchy(Array.from(byUid.values()));
+          });
         }
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'users')
@@ -592,6 +685,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
 
     return () => {
+      unsubTeachers();
       unsubUsers();
       unsubYears();
       unsubTerms();
@@ -605,7 +699,8 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [fbUser]);
 
-  const currentUser = useMemo<UserProfile | null>(() => {
+  // Actual logged-in user before "View As" override
+  const realAuthUser = useMemo<UserProfile | null>(() => {
     if (fbUser) {
       const matched = findMatchingTeacherProfileByEmailOrUid(users, fbUser.email, fbUser.uid);
       if (matched) {
@@ -616,7 +711,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           uid: fbUser.uid,
           email: fbUser.email || matched.email,
           photoURL: fbUser.photoURL || matched.photoURL,
-          role: isSuperAdmin ? 'admin' : matched.role,
+          role: isSuperAdmin ? 'super_admin' : matched.role,
         };
       }
       const email = fbUser.email || '';
@@ -629,28 +724,43 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         role,
         teacherCode: deriveTeacherCode(fbUser.displayName || email),
         status: 'active',
-        designation: role === 'admin' ? 'System Administrator' : 'Assistant Teacher',
+        staffType: 'teacher',
+        designation: role === 'super_admin' ? 'System Administrator' : 'Assistant Teacher',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
     }
     if (sandboxUid) {
-      return users.find((u) => u.uid === sandboxUid) || SEED_USERS[0];
+      return (
+        users.find((u) => u.uid === sandboxUid) ||
+        users.find((u) => u.uid === 'usr_admin_ad') ||
+        SEED_USERS[0]
+      );
     }
     return null;
   }, [fbUser, sandboxUid, users]);
 
+  // Effective user (switches to the inspected teacher when View As is active for super_admin or main_admin)
+  const currentUser = useMemo<UserProfile | null>(() => {
+    if (!realAuthUser) return null;
+    if (viewAsTeacherUid && isFullAdminUser(realAuthUser)) {
+      const target = users.find((u) => u.uid === viewAsTeacherUid);
+      if (target) return target;
+    }
+    return realAuthUser;
+  }, [realAuthUser, viewAsTeacherUid, users]);
+
   const isSuperAdminSession = useMemo<boolean>(() => {
     if (initialAutostart) return true;
-    const email = (fbUser?.email || currentUser?.email || '').trim().toLowerCase();
-    return email === 'ananneyadebnath@gmail.com';
-  }, [initialAutostart, fbUser, currentUser]);
+    return isSuperAdminUser(realAuthUser) || isFullAdminUser(realAuthUser);
+  }, [initialAutostart, realAuthUser]);
 
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
       setSandboxUid(null);
+      setViewAsTeacherUid(null);
     } catch (error: any) {
       const code = error?.code || '';
       if (code === 'auth/popup-closed-by-user') {
@@ -668,11 +778,13 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const enterSandboxAs = useCallback((uid: string) => {
     setAuthError(null);
     setSandboxUid(uid);
+    setViewAsTeacherUid(null);
     setShowPublicWebsite(false);
   }, []);
 
   const logout = useCallback(async () => {
     setSandboxUid(null);
+    setViewAsTeacherUid(null);
     setShowPublicWebsite(false);
     if (fbUser) {
       await signOut(auth);
@@ -684,11 +796,18 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!fbUser) return;
     try {
       const batch = writeBatch(db);
-      SEED_USERS.forEach((u) => batch.set(doc(db, 'users', u.uid), u));
+      SEED_USERS.forEach((u) => {
+        batch.set(doc(db, 'users', u.uid), u);
+        batch.set(doc(db, 'teachers', u.uid), u);
+      });
       SEED_ACADEMIC_YEARS.forEach((y) => batch.set(doc(db, 'academicYears', y.id), y));
       SEED_EXAM_TERMS.forEach((t) => batch.set(doc(db, 'examTerms', t.id), t));
-      SEED_CLASS_SECTIONS.forEach((c) => batch.set(doc(db, 'classSections', c.id), c));
-      SEED_SUBJECT_ASSIGNMENTS.forEach((a) => batch.set(doc(db, 'subjectAssignments', a.id), a));
+      INITIAL_DERIVED.updatedClassSections.forEach((c) =>
+        batch.set(doc(db, 'classSections', c.id), c)
+      );
+      INITIAL_DERIVED.updatedSubjectAssignments.forEach((a) =>
+        batch.set(doc(db, 'subjectAssignments', a.id), a)
+      );
       SEED_STUDENTS.forEach((s) => batch.set(doc(db, 'students', s.id), s));
       SEED_ROUTINE_RECORDS.forEach((r) => batch.set(doc(db, 'routineEntries', r.id), r));
       await batch.commit();
@@ -697,45 +816,87 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [fbUser]);
 
-  // 1. Manage Teachers & Admins (Restricted to role === 'admin')
+  // 1. Manage Teachers & Staff (Restricted to Super Admin / Main Admin with hierarchy protection)
   const updateUserRoleAndStatus = useCallback(
-    async (
-      uid: string,
-      updates: {
-        role?: UserRole;
-        status?: AccountStatus;
-        teacherCode?: string;
-        designation?: string;
-        name?: string;
-        email?: string;
-      }
-    ) => {
-      if (currentUser?.role !== 'admin') return;
+    async (uid: string, updates: Partial<TeacherStaffCrudInput>) => {
+      const actor = realAuthUser || currentUser;
+      if (!isFullAdminUser(actor)) return;
+
       const target = users.find((u) => u.uid === uid);
       if (!target) return;
 
-      const cleanEmail = (updates.email ?? target.email).trim().toLowerCase().slice(0, 160);
-      const isSuperAdminEmail = cleanEmail === 'ananneyadebnath@gmail.com';
+      // Enforce Admin Hierarchy: main_admin CANNOT edit or demote super_admin
+      if (!canEditTargetTeacherProfile(actor, target)) {
+        return;
+      }
+
+      const rawEmail = updates.email !== undefined ? updates.email : target.email;
+      const cleanEmail = (rawEmail || '').trim().toLowerCase().slice(0, 160);
+      const isTargetSuperAdmin =
+        isSuperAdminUser(target) || cleanEmail === 'ananneyadebnath@gmail.com';
+
+      // Only Super Admin can assign the 'super_admin' role
+      let nextRole: UserRole = updates.role ?? target.role;
+      if (isTargetSuperAdmin) {
+        nextRole = 'super_admin';
+      } else if (nextRole === 'super_admin' && !isSuperAdminUser(actor)) {
+        nextRole = 'main_admin';
+      }
+
+      const nextName = (updates.name ?? target.name).trim().slice(0, 120) || target.name;
+      const nextNameBn =
+        updates.nameBn !== undefined
+          ? updates.nameBn.trim().slice(0, 120)
+          : target.nameBn || nextName;
+      const nextCode =
+        (updates.teacherCode ?? target.teacherCode).trim().toUpperCase().slice(0, 12) || 'TCH';
+      const nextRoutineAbbr =
+        updates.routineAbbreviation !== undefined
+          ? updates.routineAbbreviation.trim().slice(0, 16)
+          : target.routineAbbreviation || nextCode;
 
       const updated: UserProfile = {
         ...target,
-        email: cleanEmail || target.email,
-        role: isSuperAdminEmail ? 'admin' : updates.role ?? target.role,
-        status: isSuperAdminEmail ? 'active' : updates.status ?? target.status,
-        teacherCode: (updates.teacherCode ?? target.teacherCode)
-          .trim()
-          .toUpperCase()
-          .slice(0, 12) || 'TCH',
+        name: nextName,
+        nameBn: nextNameBn,
+        email: cleanEmail,
+        photoURL:
+          updates.photoURL !== undefined
+            ? updates.photoURL.trim().slice(0, 500)
+            : target.photoURL,
+        role: nextRole,
+        status: isTargetSuperAdmin ? 'active' : updates.status ?? target.status,
+        teacherCode: nextCode,
+        routineAbbreviation: nextRoutineAbbr,
+        staffType: updates.staffType ?? target.staffType ?? 'teacher',
         designation: (updates.designation ?? target.designation).trim().slice(0, 80),
-        name: (updates.name ?? target.name).trim().slice(0, 120),
+        subject:
+          updates.subject !== undefined
+            ? updates.subject.trim().slice(0, 120)
+            : target.subject || '',
+        qualification:
+          updates.qualification !== undefined
+            ? updates.qualification.trim().slice(0, 120)
+            : target.qualification || '',
+        indexNo:
+          updates.indexNo !== undefined
+            ? updates.indexNo.trim().slice(0, 40)
+            : target.indexNo || '',
+        joiningDate:
+          updates.joiningDate !== undefined
+            ? updates.joiningDate.trim().slice(0, 32)
+            : target.joiningDate || '',
+        phone:
+          updates.phone !== undefined ? updates.phone.trim().slice(0, 32) : target.phone || '',
+        isSenior: updates.isSenior !== undefined ? updates.isSenior : target.isSenior,
+        serial: updates.serial !== undefined ? updates.serial : target.serial,
         updatedAt: new Date().toISOString(),
       };
 
-      // If another user profile (e.g. a newly signed-in Google user) already has this exact email,
-      // automatically link that Google user's UID to this teacher profile!
+      // If a non-empty email matches another user profile, link them automatically
       const existingGoogleUserWithSameEmail =
-        updates.email !== undefined
-          ? users.find((u) => u.uid !== uid && u.email.trim().toLowerCase() === cleanEmail)
+        updates.email !== undefined && cleanEmail
+          ? users.find((u) => u.uid !== uid && (u.email || '').trim().toLowerCase() === cleanEmail)
           : undefined;
 
       if (existingGoogleUserWithSameEmail) {
@@ -756,8 +917,10 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           try {
             const batch = writeBatch(db);
             batch.set(doc(db, 'users', merged.linkedProfile.uid), merged.linkedProfile);
+            batch.set(doc(db, 'teachers', merged.linkedProfile.uid), merged.linkedProfile);
             if (uid !== merged.linkedProfile.uid) {
               batch.delete(doc(db, 'users', uid));
+              batch.delete(doc(db, 'teachers', uid));
             }
             merged.updatedClassSections.forEach((cs) => {
               batch.set(doc(db, 'classSections', cs.id), cs);
@@ -775,7 +938,6 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setUsers((prev) => prev.map((u) => (u.uid === uid ? updated : u)));
 
-      // Also keep teacherCode & teacherName synced in classSections & subjectAssignments
       setClassSections((prev) =>
         prev.map((cs) =>
           cs.classTeacherUid === uid
@@ -802,17 +964,19 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (fbUser) {
         try {
           await setDoc(doc(db, 'users', uid), updated);
+          await setDoc(doc(db, 'teachers', uid), updated);
         } catch (err) {
           handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
         }
       }
     },
-    [currentUser, users, classSections, subjectAssignments, fbUser]
+    [realAuthUser, currentUser, users, classSections, subjectAssignments, fbUser]
   );
 
   const linkUserToTeacherProfile = useCallback(
     async (sourceTeacherUid: string, targetGoogleUid: string) => {
-      if (currentUser?.role !== 'admin') return;
+      const actor = realAuthUser || currentUser;
+      if (!isFullAdminUser(actor)) return;
       if (!sourceTeacherUid || !targetGoogleUid || sourceTeacherUid === targetGoogleUid) return;
 
       const merged = mergeAndLinkTeacherProfileUid({
@@ -833,7 +997,9 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         try {
           const batch = writeBatch(db);
           batch.set(doc(db, 'users', merged.linkedProfile.uid), merged.linkedProfile);
+          batch.set(doc(db, 'teachers', merged.linkedProfile.uid), merged.linkedProfile);
           batch.delete(doc(db, 'users', sourceTeacherUid));
+          batch.delete(doc(db, 'teachers', sourceTeacherUid));
           merged.updatedClassSections.forEach((cs) => {
             batch.set(doc(db, 'classSections', cs.id), cs);
           });
@@ -846,38 +1012,65 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [currentUser, users, classSections, subjectAssignments, fbUser]
+    [realAuthUser, currentUser, users, classSections, subjectAssignments, fbUser]
   );
 
   const createTeacherAccount = useCallback(
-    async (input: {
-      name: string;
-      email: string;
-      teacherCode?: string;
-      designation?: string;
-      role?: UserRole;
-    }) => {
-      const cleanName = input.name.trim().slice(0, 120);
-      const cleanEmail = input.email.trim().toLowerCase().slice(0, 160);
-      if (!cleanName || !cleanEmail) return;
+    async (input: TeacherStaffCrudInput) => {
+      const actor = realAuthUser || currentUser;
+      if (!isFullAdminUser(actor)) return;
 
+      const cleanName = (input.name || input.nameBn || '').trim().slice(0, 120);
+      const cleanNameBn = (input.nameBn || input.name || '').trim().slice(0, 120);
+      if (!cleanName) return;
+
+      // Email is completely optional!
+      const cleanEmail = (input.email || '').trim().toLowerCase().slice(0, 160);
       const uid = sanitizeFirestoreId(`usr_${Date.now()}`, 64);
-      const role: UserRole =
-        cleanEmail === 'ananneyadebnath@gmail.com' ? 'admin' : input.role || 'teacher';
+
+      let role: UserRole =
+        cleanEmail === 'ananneyadebnath@gmail.com'
+          ? 'super_admin'
+          : input.role || (input.staffType === 'staff' ? 'teacher' : 'subject_teacher');
+
+      if (role === 'super_admin' && !isSuperAdminUser(actor)) {
+        role = 'main_admin';
+      }
+
       const code =
-        (input.teacherCode || deriveTeacherCode(cleanName)).trim().toUpperCase().slice(0, 12) ||
-        'TCH';
+        (input.teacherCode || input.routineAbbreviation || deriveTeacherCode(cleanName))
+          .trim()
+          .toUpperCase()
+          .slice(0, 12) || 'TCH';
+      const routineAbbr = (input.routineAbbreviation || code).trim().slice(0, 16);
+      const staffType: StaffType = input.staffType === 'staff' ? 'staff' : 'teacher';
       const nowIso = new Date().toISOString();
+
+      const sameTypeCount = users.filter((u) => (u.staffType || 'teacher') === staffType).length;
 
       const newProfile: UserProfile = {
         uid,
+        serial: input.serial ?? sameTypeCount + 1,
         name: cleanName,
+        nameBn: cleanNameBn,
         email: cleanEmail,
-        photoURL: '',
+        photoURL: (input.photoURL || '').trim().slice(0, 500),
         role,
         teacherCode: code,
-        status: 'active',
-        designation: (input.designation || 'Assistant Teacher').trim().slice(0, 80),
+        routineAbbreviation: routineAbbr,
+        status: input.status || 'active',
+        staffType,
+        designation: (
+          input.designation || (staffType === 'staff' ? 'অফিস কর্মচারী' : 'সহকারী শিক্ষক')
+        )
+          .trim()
+          .slice(0, 80),
+        subject: (input.subject || '').trim().slice(0, 120),
+        qualification: (input.qualification || '').trim().slice(0, 120),
+        indexNo: (input.indexNo || '').trim().slice(0, 40),
+        joiningDate: (input.joiningDate || '').trim().slice(0, 32),
+        phone: (input.phone || '').trim().slice(0, 32),
+        isSenior: Boolean(input.isSenior),
         createdAt: nowIso,
         updatedAt: nowIso,
       };
@@ -887,31 +1080,63 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (fbUser) {
         try {
           await setDoc(doc(db, 'users', uid), newProfile);
+          await setDoc(doc(db, 'teachers', uid), newProfile);
         } catch (err) {
           handleFirestoreError(err, OperationType.CREATE, `users/${uid}`);
         }
       }
     },
-    [fbUser]
+    [realAuthUser, currentUser, users, fbUser]
+  );
+
+  const deleteTeacherAccount = useCallback(
+    async (uid: string) => {
+      const actor = realAuthUser || currentUser;
+      if (!isFullAdminUser(actor)) return;
+
+      const target = users.find((u) => u.uid === uid);
+      if (!target) return;
+
+      // Enforce Admin Hierarchy: main_admin CANNOT delete super_admin, and no one can delete Super Admin
+      if (isSuperAdminUser(target) || !canEditTargetTeacherProfile(actor, target)) {
+        return;
+      }
+
+      setUsers((prev) => prev.filter((u) => u.uid !== uid));
+
+      if (fbUser) {
+        try {
+          await deleteDoc(doc(db, 'users', uid));
+          await deleteDoc(doc(db, 'teachers', uid));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `users/${uid}`);
+        }
+      }
+    },
+    [realAuthUser, currentUser, users, fbUser]
   );
 
   const seedDirectoryTeachers = useCallback(async (): Promise<number> => {
-    if (currentUser?.role !== 'admin') return 0;
+    const actor = realAuthUser || currentUser;
+    if (!isFullAdminUser(actor)) return 0;
     const nowIso = new Date().toISOString();
-    const mergedByEmail = new Map<string, UserProfile>();
+    const byUid = new Map<string, UserProfile>();
 
     users.forEach((u) => {
-      mergedByEmail.set(u.email.toLowerCase(), u);
+      byUid.set(u.uid, u);
     });
 
     const syncedProfiles: UserProfile[] = [];
 
     PUBLIC_TEACHERS_DIRECTORY.forEach((dirT, idx) => {
-      const fallbackEmail = `teacher.${dirT.teacherCode.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}@aths.edu.bd`;
-      const emailLower = (dirT.email || fallbackEmail).trim().toLowerCase();
+      const emailLower = (dirT.email || '').trim().toLowerCase();
       const existing =
-        mergedByEmail.get(emailLower) ||
-        users.find((u) => u.teacherCode.toUpperCase() === dirT.teacherCode.toUpperCase());
+        users.find(
+          (u) =>
+            (emailLower && (u.email || '').trim().toLowerCase() === emailLower) ||
+            normalizeAbbr(u.teacherCode) === normalizeAbbr(dirT.teacherCode) ||
+            normalizeAbbr(u.routineAbbreviation) === normalizeAbbr(dirT.teacherCode)
+        ) || SEED_USERS.find((s) => s.serial === dirT.serial && s.staffType === 'teacher');
 
       const isSuperAdmin = emailLower === 'ananneyadebnath@gmail.com';
       const uid = existing
@@ -919,23 +1144,66 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         : sanitizeFirestoreId(`usr_dir_${idx + 1}_${dirT.teacherCode}`, 64);
 
       const profile: UserProfile = {
+        ...(existing || {}),
         uid,
+        serial: dirT.serial,
         name: (existing?.name || dirT.name).slice(0, 120),
-        email: emailLower,
+        nameBn: (existing?.nameBn || dirT.name).slice(0, 120),
+        email: emailLower || existing?.email || '',
         photoURL: (dirT.photoUrl || existing?.photoURL || '').slice(0, 500),
-        role: isSuperAdmin ? 'admin' : existing?.role || (idx === 0 ? 'admin' : 'teacher'),
-        teacherCode: dirT.teacherCode.trim().toUpperCase().slice(0, 12),
+        role: isSuperAdmin
+          ? 'super_admin'
+          : existing?.role ||
+            (idx === 0 ? 'head_teacher' : idx === 1 ? 'asst_head_teacher' : 'subject_teacher'),
+        teacherCode: (existing?.teacherCode || dirT.teacherCode).trim().toUpperCase().slice(0, 12),
+        routineAbbreviation: existing?.routineAbbreviation || dirT.teacherCode,
         status: existing?.status || 'active',
-        designation: `${dirT.designation} — ${dirT.subject}`.slice(0, 80),
+        staffType: 'teacher',
+        designation: dirT.designation.slice(0, 80),
+        subject: dirT.subject.slice(0, 120),
+        phone: dirT.phone || existing?.phone || '',
+        isSenior: dirT.isSenior,
+        isLeadership: dirT.isLeadership,
         createdAt: existing?.createdAt || nowIso,
         updatedAt: nowIso,
       };
 
-      mergedByEmail.set(emailLower, profile);
+      byUid.set(uid, profile);
       syncedProfiles.push(profile);
     });
 
-    const finalUsers = Array.from(mergedByEmail.values());
+    PUBLIC_STAFF_DIRECTORY.forEach((dirS, idx) => {
+      const existing =
+        users.find((u) => u.indexNo === dirS.indexNo && u.staffType === 'staff') ||
+        SEED_USERS.find((s) => s.serial === dirS.serial && s.staffType === 'staff');
+
+      const uid = existing ? existing.uid : sanitizeFirestoreId(`usr_stf_${idx + 1}`, 64);
+
+      const profile: UserProfile = {
+        ...(existing || {}),
+        uid,
+        serial: dirS.serial,
+        name: (existing?.name || dirS.name).slice(0, 120),
+        nameBn: (existing?.nameBn || dirS.name).slice(0, 120),
+        email: existing?.email || '',
+        photoURL: existing?.photoURL || '',
+        role: existing?.role || (idx === 0 ? 'main_admin' : 'teacher'),
+        teacherCode: existing?.teacherCode || (idx === 0 ? 'SH' : `STF${idx + 1}`),
+        routineAbbreviation: existing?.routineAbbreviation || (idx === 0 ? 'S.H.' : ''),
+        status: existing?.status || 'active',
+        staffType: 'staff',
+        designation: dirS.designation.slice(0, 80),
+        indexNo: dirS.indexNo,
+        phone: dirS.phone,
+        createdAt: existing?.createdAt || nowIso,
+        updatedAt: nowIso,
+      };
+
+      byUid.set(uid, profile);
+      syncedProfiles.push(profile);
+    });
+
+    const finalUsers = Array.from(byUid.values());
     setUsers(finalUsers);
 
     if (fbUser) {
@@ -943,6 +1211,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const batch = writeBatch(db);
         syncedProfiles.forEach((p) => {
           batch.set(doc(db, 'users', p.uid), p);
+          batch.set(doc(db, 'teachers', p.uid), p);
         });
         await batch.commit();
       } catch (err) {
@@ -951,7 +1220,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     return syncedProfiles.length;
-  }, [currentUser, users, fbUser]);
+  }, [realAuthUser, currentUser, users, fbUser]);
 
   // 2. Manage Academic Years, Terms & Classes
   const createAcademicYear = useCallback(
@@ -1130,6 +1399,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         classTeacherName: assignedTeacher ? assignedTeacher.name : 'Unassigned',
         classTeacherCode: assignedTeacher ? assignedTeacher.teacherCode : '-',
         roomNumber: (input.roomNumber.trim() || 'TBD').slice(0, 32),
+        isManualOverride: Boolean(assignedTeacher),
         createdAt: new Date().toISOString(),
       };
 
@@ -1160,9 +1430,9 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [fbUser]
   );
 
-  // 3. Class Teacher & Subject Assignment Matrix
+  // 3. Class Teacher & Subject Assignment Matrix (with Manual Override support)
   const assignClassTeacher = useCallback(
-    async (classSectionId: string, teacherUid: string) => {
+    async (classSectionId: string, teacherUid: string, isManualOverride = true) => {
       const targetCs = classSections.find((c) => c.id === classSectionId);
       if (!targetCs) return;
 
@@ -1172,6 +1442,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         classTeacherUid: teacher ? teacher.uid : '',
         classTeacherName: teacher ? teacher.name : 'Unassigned',
         classTeacherCode: teacher ? teacher.teacherCode : '-',
+        isManualOverride: teacher ? isManualOverride : false,
       };
 
       setClassSections((prev) => prev.map((c) => (c.id === classSectionId ? updatedCs : c)));
@@ -1196,19 +1467,29 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       subjectName: string;
       teacherUid: string;
       maxMarks: number;
+      isManualOverride?: boolean;
     }) => {
       const targetCs = classSections.find((c) => c.id === input.classSectionId);
       const teacher = users.find((u) => u.uid === input.teacherUid);
       if (!targetCs || !teacher) return;
 
-      const id = input.id
-        ? sanitizeFirestoreId(input.id, 64)
-        : sanitizeFirestoreId(
-            `asg_${input.classSectionId}_${input.subjectCode}_${Date.now()}`,
-            64
-          );
+      const existing = subjectAssignments.find(
+        (a) =>
+          (input.id && a.id === input.id) ||
+          (a.classSectionId === input.classSectionId && a.subjectCode === input.subjectCode.trim())
+      );
+
+      const id = existing
+        ? existing.id
+        : input.id
+          ? sanitizeFirestoreId(input.id, 64)
+          : sanitizeFirestoreId(
+              `asg_${input.classSectionId}_${input.subjectCode}_${Date.now()}`,
+              64
+            );
 
       const assignment: SubjectAssignment = {
+        ...(existing || {}),
         id,
         academicYearId: sanitizeFirestoreId(input.academicYearId, 64),
         classSectionId: targetCs.id,
@@ -1220,7 +1501,8 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         teacherName: teacher.name,
         teacherCode: teacher.teacherCode,
         maxMarks: Math.min(200, Math.max(1, Number(input.maxMarks) || 100)),
-        createdAt: new Date().toISOString(),
+        isManualOverride: input.isManualOverride ?? true,
+        createdAt: existing?.createdAt || new Date().toISOString(),
       };
 
       setSubjectAssignments((prev) => {
@@ -1239,7 +1521,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [classSections, users, fbUser]
+    [classSections, users, subjectAssignments, fbUser]
   );
 
   const deleteSubjectAssignment = useCallback(
@@ -1254,6 +1536,218 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     },
     [fbUser]
+  );
+
+  const syncAssignmentsFromRoutineNow = useCallback(async () => {
+    const resetClasses = classSections.map((cs) =>
+      cs.academicYearId === selectedAcademicYearId ? { ...cs, isManualOverride: false } : cs
+    );
+    const resetAsgs = subjectAssignments.map((a) =>
+      a.academicYearId === selectedAcademicYearId ? { ...a, isManualOverride: false } : a
+    );
+    const derived = deriveClassTeachersAndSubjectAssignmentsFromRoutine({
+      routineRecords,
+      classSections: resetClasses,
+      teachers: users,
+      existingAssignments: resetAsgs,
+      academicYearId: selectedAcademicYearId,
+    });
+    setClassSections(derived.updatedClassSections);
+    setSubjectAssignments(derived.updatedSubjectAssignments);
+
+    if (fbUser && isFullAdminUser(realAuthUser || currentUser)) {
+      try {
+        const batch = writeBatch(db);
+        derived.updatedClassSections.forEach((cs) =>
+          batch.set(doc(db, 'classSections', cs.id), cs)
+        );
+        derived.updatedSubjectAssignments.forEach((asg) =>
+          batch.set(doc(db, 'subjectAssignments', asg.id), asg)
+        );
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, 'syncAssignmentsFromRoutineNow');
+      }
+    }
+    return {
+      updatedSectionsCount: derived.updatedClassSections.length,
+      updatedSubjectsCount: derived.updatedSubjectAssignments.length,
+    };
+  }, [
+    classSections,
+    subjectAssignments,
+    routineRecords,
+    users,
+    selectedAcademicYearId,
+    fbUser,
+    realAuthUser,
+    currentUser,
+  ]);
+
+  // Multi-Stage Marks Submission & Section Approval Workflow
+  const submitSubjectMarksToClassTeacher = useCallback(
+    async (assignmentId: string, termId: string) => {
+      if (!currentUser) return;
+      const target = subjectAssignments.find((a) => a.id === assignmentId);
+      if (!target) return;
+      if (!canManageSubjectMarks(currentUser, target, termId)) return;
+
+      const nowIso = new Date().toISOString();
+      const updated: SubjectAssignment = {
+        ...target,
+        statusByTerm: {
+          ...(target.statusByTerm || {}),
+          [termId]: 'submitted',
+        },
+        submittedAtByTerm: {
+          ...(target.submittedAtByTerm || {}),
+          [termId]: nowIso,
+        },
+        submittedByUidByTerm: {
+          ...(target.submittedByUidByTerm || {}),
+          [termId]: currentUser.uid,
+        },
+      };
+
+      setSubjectAssignments((prev) => prev.map((a) => (a.id === assignmentId ? updated : a)));
+
+      if (fbUser) {
+        try {
+          await setDoc(doc(db, 'subjectAssignments', assignmentId), updated);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `subjectAssignments/${assignmentId}`);
+        }
+      }
+    },
+    [currentUser, subjectAssignments, fbUser]
+  );
+
+  const unlockSubjectMarksToDraft = useCallback(
+    async (assignmentId: string, termId: string) => {
+      if (!isPrivilegedReviewerUser(currentUser)) return;
+      const target = subjectAssignments.find((a) => a.id === assignmentId);
+      if (!target) return;
+
+      const updated: SubjectAssignment = {
+        ...target,
+        statusByTerm: {
+          ...(target.statusByTerm || {}),
+          [termId]: 'draft',
+        },
+      };
+
+      setSubjectAssignments((prev) => prev.map((a) => (a.id === assignmentId ? updated : a)));
+
+      if (fbUser) {
+        try {
+          await setDoc(doc(db, 'subjectAssignments', assignmentId), updated);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `subjectAssignments/${assignmentId}`);
+        }
+      }
+    },
+    [currentUser, subjectAssignments, fbUser]
+  );
+
+  const submitSectionResultsForApproval = useCallback(
+    async (classSectionId: string, termId: string) => {
+      if (!currentUser) return;
+      const targetCs = classSections.find((c) => c.id === classSectionId);
+      if (!targetCs) return;
+      if (
+        !isAssignedClassTeacherForSection(currentUser, targetCs) &&
+        !isPrivilegedReviewerUser(currentUser)
+      ) {
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const updatedCs: ClassSection = {
+        ...targetCs,
+        sectionResultStatusByTerm: {
+          ...(targetCs.sectionResultStatusByTerm || {}),
+          [termId]: 'submitted_for_approval',
+        },
+        sectionSubmittedAtByTerm: {
+          ...(targetCs.sectionSubmittedAtByTerm || {}),
+          [termId]: nowIso,
+        },
+      };
+
+      setClassSections((prev) => prev.map((c) => (c.id === classSectionId ? updatedCs : c)));
+
+      if (fbUser) {
+        try {
+          await setDoc(doc(db, 'classSections', classSectionId), updatedCs);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `classSections/${classSectionId}`);
+        }
+      }
+    },
+    [currentUser, classSections, fbUser]
+  );
+
+  const approveSectionResults = useCallback(
+    async (classSectionId: string, termId: string) => {
+      if (!currentUser || !isPrivilegedReviewerUser(currentUser)) return;
+      const targetCs = classSections.find((c) => c.id === classSectionId);
+      if (!targetCs) return;
+
+      const nowIso = new Date().toISOString();
+      const updatedCs: ClassSection = {
+        ...targetCs,
+        sectionResultStatusByTerm: {
+          ...(targetCs.sectionResultStatusByTerm || {}),
+          [termId]: 'approved',
+        },
+        sectionApprovedAtByTerm: {
+          ...(targetCs.sectionApprovedAtByTerm || {}),
+          [termId]: nowIso,
+        },
+        sectionApprovedByUidByTerm: {
+          ...(targetCs.sectionApprovedByUidByTerm || {}),
+          [termId]: currentUser.uid,
+        },
+      };
+
+      setClassSections((prev) => prev.map((c) => (c.id === classSectionId ? updatedCs : c)));
+
+      if (fbUser) {
+        try {
+          await setDoc(doc(db, 'classSections', classSectionId), updatedCs);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `classSections/${classSectionId}`);
+        }
+      }
+    },
+    [currentUser, classSections, fbUser]
+  );
+
+  const unlockSectionResultsToDraft = useCallback(
+    async (classSectionId: string, termId: string) => {
+      if (!currentUser || !isPrivilegedReviewerUser(currentUser)) return;
+      const targetCs = classSections.find((c) => c.id === classSectionId);
+      if (!targetCs) return;
+
+      const updatedCs: ClassSection = {
+        ...targetCs,
+        sectionResultStatusByTerm: {
+          ...(targetCs.sectionResultStatusByTerm || {}),
+          [termId]: 'draft',
+        },
+      };
+
+      setClassSections((prev) => prev.map((c) => (c.id === classSectionId ? updatedCs : c)));
+
+      if (fbUser) {
+        try {
+          await setDoc(doc(db, 'classSections', classSectionId), updatedCs);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `classSections/${classSectionId}`);
+        }
+      }
+    },
+    [currentUser, classSections, fbUser]
   );
 
   // 4. Master Student Roster Management
@@ -1330,7 +1824,6 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       });
 
       setStudents((prev) => {
-        // Replace existing students with the same roll in that classSection or append
         const incomingRolls = new Set(createdList.map((s) => s.roll));
         const filtered = prev.filter(
           (s) => !(s.classSectionId === classSectionId && incomingRolls.has(s.roll))
@@ -1416,6 +1909,9 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       absentRolls: string;
     }) => {
       if (!currentUser) return;
+      const targetCs = classSections.find((c) => c.id === input.classSectionId);
+      if (!canManageClassRosterAndAttendance(currentUser, targetCs)) return;
+
       const id = sanitizeFirestoreId(`att_${input.classSectionId}_${input.date}`, 128);
       const record: AttendanceRecord = {
         id,
@@ -1441,11 +1937,14 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [currentUser, fbUser]
+    [currentUser, classSections, fbUser]
   );
 
   const clearAttendanceForDate = useCallback(
     async (classSectionId: string, date: string) => {
+      const targetCs = classSections.find((c) => c.id === classSectionId);
+      if (!canManageClassRosterAndAttendance(currentUser, targetCs)) return;
+
       const id = sanitizeFirestoreId(`att_${classSectionId}_${date}`, 128);
       setAttendanceRecords((prev) =>
         prev.filter((r) => !(r.classSectionId === classSectionId && r.date === date))
@@ -1458,12 +1957,15 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [fbUser]
+    [currentUser, classSections, fbUser]
   );
 
   const toggleStudentAttendanceOnDate = useCallback(
     async (classSectionId: string, date: string, roll: number) => {
       if (!currentUser) return;
+      const targetCs = classSections.find((c) => c.id === classSectionId);
+      if (!canManageClassRosterAndAttendance(currentUser, targetCs)) return;
+
       const existing = attendanceRecords.find(
         (r) => r.classSectionId === classSectionId && r.date === date
       );
@@ -1488,7 +1990,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         absentRolls,
       });
     },
-    [currentUser, attendanceRecords, students, saveAttendanceRecord]
+    [currentUser, classSections, attendanceRecords, students, saveAttendanceRecord]
   );
 
   const saveSubjectMarkRecord = useCallback(
@@ -1506,7 +2008,13 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }) => {
       if (!currentUser) return;
       const targetTerm = examTerms.find((t) => t.id === input.termId);
-      if (targetTerm?.isLocked && currentUser.role !== 'admin') {
+      if (targetTerm?.isLocked && !isPrivilegedReviewerUser(currentUser)) {
+        return;
+      }
+
+      const assignment = subjectAssignments.find((a) => a.id === input.assignmentId);
+      // Enforce strict lock rule: if status is 'submitted', only privileged reviewers can edit!
+      if (!canManageSubjectMarks(currentUser, assignment, input.termId)) {
         return;
       }
 
@@ -1515,7 +2023,6 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         128
       );
 
-      const assignment = subjectAssignments.find((a) => a.id === input.assignmentId);
       const spec = resolveSubjectSpec(
         assignment?.subjectCode,
         assignment?.subjectName,
@@ -1568,7 +2075,11 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     async (assignmentId: string, termId: string): Promise<SubjectMarkRecord[]> => {
       if (!currentUser) return [];
       const targetTerm = examTerms.find((t) => t.id === termId);
-      if (targetTerm?.isLocked && currentUser.role !== 'admin') {
+      if (targetTerm?.isLocked && !isPrivilegedReviewerUser(currentUser)) {
+        return [];
+      }
+      const assignment = subjectAssignments.find((a) => a.id === assignmentId);
+      if (!canManageSubjectMarks(currentUser, assignment, termId)) {
         return [];
       }
 
@@ -1594,7 +2105,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       return snapshot;
     },
-    [currentUser, examTerms, subjectMarks, fbUser]
+    [currentUser, examTerms, subjectAssignments, subjectMarks, fbUser]
   );
 
   const restoreSubjectMarksBatch = useCallback(
@@ -1639,7 +2150,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setRoutineRecords(sanitized);
 
-      if (fbUser && currentUser?.role === 'admin') {
+      if (fbUser && isFullAdminUser(realAuthUser || currentUser)) {
         try {
           const batch = writeBatch(db);
           previousIds.forEach((oldId) => {
@@ -1656,7 +2167,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [routineRecords, fbUser, currentUser]
+    [routineRecords, fbUser, realAuthUser, currentUser]
   );
 
   const saveRoutineRecord = useCallback(
@@ -1676,7 +2187,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return exists ? prev.map((r) => (r.id === clean.id ? clean : r)) : [...prev, clean];
       });
 
-      if (fbUser && currentUser?.role === 'admin') {
+      if (fbUser && isFullAdminUser(realAuthUser || currentUser)) {
         try {
           await setDoc(doc(db, 'routineEntries', clean.id), clean);
         } catch (err) {
@@ -1684,7 +2195,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [fbUser, currentUser]
+    [fbUser, realAuthUser, currentUser]
   );
 
   const saveNotice = useCallback(
@@ -1722,7 +2233,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return exists ? prev.map((n) => (n.id === id ? record : n)) : [record, ...prev];
       });
 
-      if (fbUser && currentUser?.role === 'admin') {
+      if (fbUser && isFullAdminUser(realAuthUser || currentUser)) {
         try {
           await setDoc(doc(db, 'notices', id), record);
         } catch (err) {
@@ -1730,13 +2241,13 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [fbUser, currentUser]
+    [fbUser, realAuthUser, currentUser]
   );
 
   const deleteNotice = useCallback(
     async (noticeId: string) => {
       setNotices((prev) => prev.filter((n) => n.id !== noticeId));
-      if (fbUser && currentUser?.role === 'admin') {
+      if (fbUser && isFullAdminUser(realAuthUser || currentUser)) {
         try {
           await deleteDoc(doc(db, 'notices', noticeId));
         } catch (err) {
@@ -1744,12 +2255,15 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     },
-    [fbUser, currentUser]
+    [fbUser, realAuthUser, currentUser]
   );
 
   const value = useMemo<SchoolContextValue>(
     () => ({
       currentUser,
+      realAuthUser,
+      viewAsTeacherUid,
+      setViewAsTeacherUid,
       authLoading,
       authError,
       isFirebaseAuthenticated: Boolean(fbUser),
@@ -1791,6 +2305,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updateUserRoleAndStatus,
       linkUserToTeacherProfile,
       createTeacherAccount,
+      deleteTeacherAccount,
       seedDirectoryTeachers,
       createAcademicYear,
       setActiveAcademicYear,
@@ -1803,6 +2318,12 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       assignClassTeacher,
       createOrUpdateSubjectAssignment,
       deleteSubjectAssignment,
+      syncAssignmentsFromRoutineNow,
+      submitSubjectMarksToClassTeacher,
+      unlockSubjectMarksToDraft,
+      submitSectionResultsForApproval,
+      approveSectionResults,
+      unlockSectionResultsToDraft,
       addSingleStudent,
       bulkImportStudents,
       updateStudentRecord,
@@ -1821,6 +2342,8 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }),
     [
       currentUser,
+      realAuthUser,
+      viewAsTeacherUid,
       authLoading,
       authError,
       fbUser,
@@ -1856,6 +2379,7 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updateUserRoleAndStatus,
       linkUserToTeacherProfile,
       createTeacherAccount,
+      deleteTeacherAccount,
       seedDirectoryTeachers,
       createAcademicYear,
       setActiveAcademicYear,
@@ -1868,6 +2392,12 @@ export const SchoolProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       assignClassTeacher,
       createOrUpdateSubjectAssignment,
       deleteSubjectAssignment,
+      syncAssignmentsFromRoutineNow,
+      submitSubjectMarksToClassTeacher,
+      unlockSubjectMarksToDraft,
+      submitSectionResultsForApproval,
+      approveSectionResults,
+      unlockSectionResultsToDraft,
       addSingleStudent,
       bulkImportStudents,
       updateStudentRecord,

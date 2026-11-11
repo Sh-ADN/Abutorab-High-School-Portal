@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Calendar, Plus, Trash2, CheckCircle2, Lock, Unlock } from 'lucide-react';
 import { useSchool } from '../context/SchoolContext';
 import { ExamTermType, SchoolClassName } from '../types/school';
+import { isFullAdminUser } from '../utils/schoolLogic';
 
 const CLASS_OPTIONS: SchoolClassName[] = [
   'Class 6',
@@ -59,7 +60,7 @@ export const AdminAcademicPanel: React.FC = () => {
 
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
 
-  if (!currentUser || currentUser.role !== 'admin') {
+  if (!isFullAdminUser(currentUser)) {
     return (
       <div className="p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-center">
         <p className="text-sm text-slate-600 dark:text-slate-400">

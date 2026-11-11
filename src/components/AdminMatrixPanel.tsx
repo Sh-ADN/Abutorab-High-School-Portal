@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Trash2, CheckCircle, BookOpen, UserCheck } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, BookOpen, UserCheck, RefreshCw } from 'lucide-react';
 import { useSchool } from '../context/SchoolContext';
 import { SUBJECT_CATALOG } from '../utils/marksCatalogAndLogic';
+import { isFullAdminUser } from '../utils/schoolLogic';
 
 const NCTB_CODE_MAP: Record<string, string> = {
   'Bangla 1st Paper': '101',
@@ -51,6 +52,7 @@ export const AdminMatrixPanel: React.FC = () => {
     subjectAssignments,
     createOrUpdateSubjectAssignment,
     deleteSubjectAssignment,
+    syncAssignmentsFromRoutineNow,
     num,
   } = useSchool();
 
@@ -70,7 +72,7 @@ export const AdminMatrixPanel: React.FC = () => {
   );
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  if (!currentUser || currentUser.role !== 'admin') {
+  if (!isFullAdminUser(currentUser)) {
     return (
       <div className="p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-center">
         <p className="text-sm text-slate-600 dark:text-slate-400">
@@ -81,7 +83,9 @@ export const AdminMatrixPanel: React.FC = () => {
     );
   }
 
-  const activeTeachers = users.filter((u) => u.status === 'active');
+  const activeTeachers = users.filter(
+    (u) => u.status === 'active' && (u.staffType || 'teacher') === 'teacher'
+  );
   const effectiveClassSectionId =
     classesForYear.some((c) => c.id === selectedClassSectionId)
       ? selectedClassSectionId
@@ -110,24 +114,39 @@ export const AdminMatrixPanel: React.FC = () => {
       subjectName,
       teacherUid: assignedTeacherUid,
       maxMarks,
+      isManualOverride: true,
     });
     const t = users.find((u) => u.uid === assignedTeacherUid);
     showToast(
-      `Assigned "${subjectName}" (${subjectCode}) to ${t?.name || 'Teacher'} [${t?.teacherCode || ''}] with Exam Marks Entry permission.`
+      `Assigned "${subjectName}" (${subjectCode}) to ${t?.name || 'Teacher'} [${t?.teacherCode || ''}] (Manual Override saved).`
     );
   };
 
   return (
     <div className="space-y-8">
       {/* Page Header */}
-      <div className="pb-5 border-b border-slate-200 dark:border-slate-800">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-          Class Teacher & Subject Assignment Matrix
-        </h1>
-        <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-          (a) Assign a Class Teacher to each Class & Section to grant Attendance & Roster
-          permissions, and (b) assign Subject Teachers to grant Exam Marks Entry permissions.
-        </p>
+      <div className="pb-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+            ১০টি শ্রেণি-শাখার শ্রেণি শিক্ষক ও বিষয় বণ্টন ম্যাট্রিক্স
+          </h1>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+            রুটিনের ১ম পিরিয়ড অনুযায়ী ১০টি শাখার (৬ষ্ঠ–১০ম × ক/খ) শ্রেণি শিক্ষক এবং সর্বাধিক দিন পাঠদানকারী শিক্ষক অনুযায়ী বিষয় শিক্ষক স্বয়ংক্রিয়ভাবে নির্ধারিত হয়। অ্যাডমিন যেকোনো সময় ম্যানুয়াল ওভাররাইড (Manual Override) করতে পারবেন।
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            const res = await syncAssignmentsFromRoutineNow();
+            showToast(
+              `✓ লাইভ রুটিন থেকে ${num(res.updatedSectionsCount)}টি শাখার শ্রেণি শিক্ষক ও ${num(res.updatedSubjectsCount)}টি বিষয়ের শিক্ষক স্বয়ংক্রিয়ভাবে আপডেট করা হয়েছে!`
+            );
+          }}
+          className="px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-[#0d5c56] text-white text-xs font-bold flex items-center gap-2 shrink-0 cursor-pointer shadow-xs"
+        >
+          <RefreshCw className="w-4 h-4" />
+          <span>রুটিন থেকে অটো-সিঙ্ক করুন</span>
+        </button>
       </div>
 
       {feedback && (
@@ -177,12 +196,21 @@ export const AdminMatrixPanel: React.FC = () => {
                   </td>
                   <td className="py-3.5 px-4">
                     {cs.classTeacherUid ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-slate-900 dark:text-white">
                           {cs.classTeacherName}
                         </span>
                         <span className="font-mono text-xs font-semibold text-blue-700 dark:text-blue-400">
                           [{cs.classTeacherCode}]
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                            cs.isManualOverride
+                              ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300'
+                              : 'bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300'
+                          }`}
+                        >
+                          {cs.isManualOverride ? 'Manual Override' : 'Auto: 1st Period'}
                         </span>
                       </div>
                     ) : (
@@ -192,7 +220,7 @@ export const AdminMatrixPanel: React.FC = () => {
                     )}
                   </td>
                   <td className="py-3.5 px-4 text-xs text-slate-600 dark:text-slate-400">
-                    Attendance Entry · Student Roster Import
+                    Attendance Entry · Consolidated Result Submit
                   </td>
                   <td className="py-3.5 px-4 text-right">
                     <select
@@ -200,7 +228,7 @@ export const AdminMatrixPanel: React.FC = () => {
                       value={cs.classTeacherUid}
                       onChange={async (e) => {
                         const nextUid = e.target.value;
-                        await assignClassTeacher(cs.id, nextUid);
+                        await assignClassTeacher(cs.id, nextUid, true);
                         const t = users.find((u) => u.uid === nextUid);
                         showToast(
                           t
@@ -213,7 +241,7 @@ export const AdminMatrixPanel: React.FC = () => {
                       <option value="">-- Unassigned --</option>
                       {activeTeachers.map((t) => (
                         <option key={t.uid} value={t.uid}>
-                          {t.name} [{t.teacherCode}]
+                          {t.nameBn || t.name} [{t.teacherCode}]
                         </option>
                       ))}
                     </select>
@@ -402,12 +430,27 @@ export const AdminMatrixPanel: React.FC = () => {
                     {num(asg.maxMarks)}
                   </td>
                   <td className="py-3 px-4">
-                    <span className="font-medium text-slate-900 dark:text-white">
-                      {asg.teacherName}
-                    </span>{' '}
-                    <span className="font-mono text-xs font-semibold text-blue-700 dark:text-blue-400">
-                      [{asg.teacherCode}]
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium text-slate-900 dark:text-white">
+                        {asg.teacherName}
+                      </span>
+                      <span className="font-mono text-xs font-semibold text-blue-700 dark:text-blue-400">
+                        [{asg.teacherCode}]
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          asg.isManualOverride
+                            ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300'
+                            : 'bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300'
+                        }`}
+                      >
+                        {asg.isManualOverride
+                          ? 'Manual Override'
+                          : asg.assignedDaysCount
+                          ? `Auto (${asg.assignedDaysCount}d/wk)`
+                          : 'Routine Sync'}
+                      </span>
+                    </div>
                   </td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -423,13 +466,14 @@ export const AdminMatrixPanel: React.FC = () => {
                             subjectName: asg.subjectName,
                             teacherUid: e.target.value,
                             maxMarks: asg.maxMarks,
+                            isManualOverride: true,
                           })
                         }
                         className="px-2.5 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
                       >
                         {activeTeachers.map((t) => (
                           <option key={t.uid} value={t.uid}>
-                            {t.name} [{t.teacherCode}]
+                            {t.nameBn || t.name} [{t.teacherCode}]
                           </option>
                         ))}
                       </select>

@@ -9,12 +9,20 @@ import {
   RotateCcw,
   Save,
   Search,
+  Send,
   Sparkles,
   Trash2,
   Unlock,
 } from 'lucide-react';
 import { useSchool } from '../context/SchoolContext';
-import { canManageSubjectMarks } from '../utils/schoolLogic';
+import {
+  canManageSubjectMarks,
+  getSubjectSubmissionStatus,
+  isAssignedClassTeacherForSection,
+  isAssignedSubjectTeacher,
+  isFullAdminUser,
+  isPrivilegedReviewerUser,
+} from '../utils/schoolLogic';
 import {
   evaluateSubjectMarkComponents,
   resolveSubjectSpec,
@@ -51,6 +59,9 @@ export const SubjectMarksModule: React.FC = () => {
     clearSubjectMarksForAssignment,
     restoreSubjectMarksBatch,
     toggleExamTermLock,
+    submitSubjectMarksToClassTeacher,
+    unlockSubjectMarksToDraft,
+    setActiveView,
     num,
   } = useSchool();
 
@@ -67,7 +78,8 @@ export const SubjectMarksModule: React.FC = () => {
 
   if (!currentUser) return null;
 
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isFullAdminUser(currentUser);
+  const isReviewer = isPrivilegedReviewerUser(currentUser);
   const activeYear = academicYears.find((y) => y.id === selectedAcademicYearId);
 
   const yearTerms = useMemo(
@@ -86,9 +98,13 @@ export const SubjectMarksModule: React.FC = () => {
     const yearList = subjectAssignments.filter(
       (a) => a.academicYearId === selectedAcademicYearId
     );
-    if (isAdmin) return yearList;
-    return yearList.filter((a) => a.teacherUid === currentUser.uid);
-  }, [subjectAssignments, selectedAcademicYearId, isAdmin, currentUser.uid]);
+    if (isReviewer) return yearList;
+    return yearList.filter((a) => {
+      if (isAssignedSubjectTeacher(currentUser, a)) return true;
+      const cs = classSections.find((c) => c.id === a.classSectionId);
+      return isAssignedClassTeacherForSection(currentUser, cs);
+    });
+  }, [subjectAssignments, selectedAcademicYearId, isReviewer, currentUser, classSections]);
 
   useEffect(() => {
     if (
@@ -131,11 +147,18 @@ export const SubjectMarksModule: React.FC = () => {
 
   const passMark = useMemo(() => Math.ceil(subjectSpec.fullMarks * 0.33), [subjectSpec.fullMarks]);
 
+  const currentSubjectStatus = useMemo(
+    () => getSubjectSubmissionStatus(activeAssignment, activeTerm?.id),
+    [activeAssignment, activeTerm?.id]
+  );
+
+  const isSubjectSubmitted = currentSubjectStatus === 'submitted';
+
   const canEditMarks = useMemo(() => {
     if (!activeAssignment) return false;
-    if (isTermLocked && !isAdmin) return false;
-    return canManageSubjectMarks(currentUser, activeAssignment);
-  }, [activeAssignment, isTermLocked, isAdmin, currentUser]);
+    if (isTermLocked && !isReviewer) return false;
+    return canManageSubjectMarks(currentUser, activeAssignment, activeTerm?.id);
+  }, [activeAssignment, isTermLocked, isReviewer, currentUser, activeTerm?.id]);
 
   const classStudents = useMemo(() => {
     if (!activeAssignment) return [];
@@ -439,6 +462,25 @@ export const SubjectMarksModule: React.FC = () => {
     );
   };
 
+  const handleFinalSubmitToClassTeacher = async () => {
+    if (!activeAssignment || !activeTerm) return;
+    if (canEditMarks) {
+      await handleSaveAllMarks();
+    }
+    await submitSubjectMarksToClassTeacher(activeAssignment.id, activeTerm.id);
+    setSaveBanner(
+      `🔒 "${activeAssignment.subjectName}" বিষয়ের নম্বর শ্রেণি শিক্ষকের নিকট চূড়ান্তভাবে জমা দেওয়া হয়েছে এবং লক (Locked) করা হয়েছে।`
+    );
+  };
+
+  const handleUnlockSubjectToDraft = async () => {
+    if (!activeAssignment || !activeTerm || !isReviewer) return;
+    await unlockSubjectMarksToDraft(activeAssignment.id, activeTerm.id);
+    setSaveBanner(
+      `🔓 "${activeAssignment.subjectName}" বিষয়ের নম্বর পুনরায় খসড়া (Draft) অবস্থায় আনলক করা হয়েছে।`
+    );
+  };
+
   const handleClearAllWithUndo = async () => {
     if (!activeAssignment || !activeTerm || !canEditMarks) return;
     const backup = await clearSubjectMarksForAssignment(activeAssignment.id, activeTerm.id);
@@ -584,16 +626,34 @@ export const SubjectMarksModule: React.FC = () => {
               ))}
             </select>
 
-            {isTermLocked ? (
-              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+            {isSubjectSubmitted ? (
+              <span
+                data-testid="badge-subject-submitted-locked"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-md bg-amber-100 dark:bg-amber-950/90 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+              >
                 <Lock className="w-3 h-3" />
-                <span>লকড</span>
+                <span>শ্রেণি শিক্ষকের নিকট জমাদানকৃত ও লকড</span>
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+              <span
+                data-testid="badge-subject-draft"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-md bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+              >
                 <Unlock className="w-3 h-3" />
-                <span>উন্মুক্ত</span>
+                <span>খসড়া (Draft — এন্ট্রি উন্মুক্ত)</span>
               </span>
+            )}
+
+            {isSubjectSubmitted && isReviewer && activeTerm && (
+              <button
+                data-testid="btn-unlock-subject-marks"
+                type="button"
+                onClick={handleUnlockSubjectToDraft}
+                className="px-2.5 py-1 text-[11px] font-bold rounded-md bg-teal-700 hover:bg-[#0d5c56] text-white flex items-center gap-1 cursor-pointer shadow-2xs"
+              >
+                <Unlock className="w-3 h-3" />
+                <span>পুনরায় এডিটের জন্য আনলক করুন</span>
+              </button>
             )}
 
             {isAdmin && activeTerm && (
@@ -602,7 +662,7 @@ export const SubjectMarksModule: React.FC = () => {
                 onClick={() => toggleExamTermLock(activeTerm.id)}
                 className="px-2 py-1 text-[11px] font-semibold rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
               >
-                {isTermLocked ? 'আনলক' : 'লক করুন'}
+                {isTermLocked ? 'টার্ম আনলক' : 'টার্ম লক'}
               </button>
             )}
 
@@ -684,6 +744,28 @@ export const SubjectMarksModule: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Strict Submission Lock Notice Banner */}
+      {isSubjectSubmitted && !isReviewer && (
+        <div
+          data-testid="strict-lock-warning-banner"
+          className="rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 px-4 py-3 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between gap-2"
+        >
+          <div className="flex items-center gap-2">
+            <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span>
+              এই বিষয়ের নম্বর চূড়ান্তভাবে শ্রেণি শিক্ষকের নিকট জমা দেওয়া হয়েছে এবং লক (Strict Lock) করা হয়েছে। শুধুমাত্র প্রধান শিক্ষক, সহকারী প্রধান শিক্ষক অথবা অ্যাডমিন এটি আনলক বা সংশোধন করতে পারবেন।
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveView('results-tabulation')}
+            className="px-3 py-1 rounded-lg bg-amber-600 text-white text-[11px] font-bold shrink-0 cursor-pointer"
+          >
+            সেকশন ফলাফল দেখুন →
+          </button>
+        </div>
+      )}
 
       {/* Feedback Banners */}
       {saveBanner && (
@@ -1123,7 +1205,7 @@ export const SubjectMarksModule: React.FC = () => {
             </span>
           </div>
 
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex flex-wrap items-center gap-2 ml-auto">
             <button
               type="button"
               onClick={() => setShowVerificationModal(true)}
@@ -1137,11 +1219,26 @@ export const SubjectMarksModule: React.FC = () => {
               type="button"
               disabled={!canEditMarks || summaryStats.outOfRangeCount > 0}
               onClick={handleSaveAllMarks}
-              className="px-4 sm:px-5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 text-slate-950 font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-md disabled:opacity-40 cursor-pointer transition-all"
+              className="px-3.5 sm:px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-white font-bold text-xs flex items-center gap-1.5 disabled:opacity-40 cursor-pointer transition-all"
             >
               <Save className="w-4 h-4" />
-              <span>নম্বর সংরক্ষণ</span>
+              <span>খসড়া সংরক্ষণ (Save Draft)</span>
             </button>
+
+            {!isSubjectSubmitted &&
+              activeAssignment &&
+              (isAssignedSubjectTeacher(currentUser, activeAssignment) || isReviewer) && (
+                <button
+                  data-testid="btn-final-submit-subject-marks"
+                  type="button"
+                  disabled={summaryStats.outOfRangeCount > 0}
+                  onClick={handleFinalSubmitToClassTeacher}
+                  className="px-4 sm:px-5 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-emerald-400 hover:from-amber-300 hover:to-emerald-300 text-slate-950 font-extrabold text-xs sm:text-sm flex items-center gap-1.5 shadow-md disabled:opacity-40 cursor-pointer transition-all"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>শ্রেণি শিক্ষকের নিকট চূড়ান্ত জমা দিন</span>
+                </button>
+              )}
           </div>
         </div>
       </div>

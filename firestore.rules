@@ -7,7 +7,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 2. Reusable Primitives & Role Helpers
+    // 2. Reusable Primitives & Role Hierarchy Helpers
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -28,25 +28,81 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    function isBootstrappedAdmin() {
+    function isBootstrappedSuperAdmin() {
       return isVerifiedUser() && request.auth.token.email == 'ananneyadebnath@gmail.com';
     }
 
-    // True only when the user has role == 'admin' (or is the bootstrapped Super Admin)
-    function isAdmin() {
-      return isBootstrappedAdmin() || (
-        isVerifiedUser() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active'
+    function currentUserRole() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : '';
+    }
+
+    function isCurrentUserActive() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    // Super Admin: Exclusively ananneyadebnath@gmail.com (ADN) or role == 'super_admin'
+    function isSuperAdmin() {
+      return isBootstrappedSuperAdmin() || (
+        isVerifiedUser() && isCurrentUserActive() && currentUserRole() == 'super_admin'
       );
     }
 
+    // Main Admin: SH (role == 'main_admin')
+    function isMainAdmin() {
+      return isVerifiedUser() && isCurrentUserActive() && currentUserRole() == 'main_admin';
+    }
+
+    // Full Admin: super_admin, main_admin, or backward-compatible 'admin'
+    function isFullAdmin() {
+      return isSuperAdmin() || isMainAdmin() || (
+        isVerifiedUser() && isCurrentUserActive() && currentUserRole() == 'admin'
+      );
+    }
+
+    // Alias for backward compatibility
+    function isAdmin() {
+      return isFullAdmin();
+    }
+
+    // Head Teacher / Asst. Head Teacher
+    function isHeadOrAsstHead() {
+      return isVerifiedUser() && isCurrentUserActive() && (
+        currentUserRole() == 'head_teacher' ||
+        currentUserRole() == 'asst_head_teacher'
+      );
+    }
+
+    // Privileged Reviewer: super_admin, main_admin, head_teacher, asst_head_teacher
+    function isPrivilegedReviewer() {
+      return isFullAdmin() || isHeadOrAsstHead();
+    }
+
     function isActiveTeacherOrAdmin() {
-      return isBootstrappedAdmin() || (
-        isVerifiedUser() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active'
+      return isBootstrappedSuperAdmin() || (
+        isVerifiedUser() && isCurrentUserActive()
+      );
+    }
+
+    // Protects the Super Admin record so main_admin cannot edit, demote, or delete super_admin
+    function isSuperAdminTargetDoc(docData) {
+      return docData.role == 'super_admin' || docData.email == 'ananneyadebnath@gmail.com';
+    }
+
+    function canAdminModifyUserDoc(existingData, incomingData) {
+      return isSuperAdmin() || (
+        isFullAdmin() &&
+        !isSuperAdminTargetDoc(existingData) &&
+        incomingData.role != 'super_admin'
+      );
+    }
+
+    function canAdminDeleteUserDoc(existingData) {
+      return isSuperAdmin() || (
+        isFullAdmin() &&
+        !isSuperAdminTargetDoc(existingData)
       );
     }
 
@@ -70,6 +126,14 @@ service cloud.firestore {
         get(/databases/$(database)/documents/subjectAssignments/$(assignmentId)).data.teacherUid == request.auth.uid;
     }
 
+    // Strict Lock Rule: Checks if a subject's marks are still in 'draft' for the given termId
+    function isSubjectDraftForTerm(assignmentId, termId) {
+      return !exists(/databases/$(database)/documents/subjectAssignments/$(assignmentId)) ||
+        !('statusByTerm' in get(/databases/$(database)/documents/subjectAssignments/$(assignmentId)).data) ||
+        !(termId in get(/databases/$(database)/documents/subjectAssignments/$(assignmentId)).data.statusByTerm) ||
+        get(/databases/$(database)/documents/subjectAssignments/$(assignmentId)).data.statusByTerm[termId] != 'submitted';
+    }
+
     function isTermUnlocked(termId) {
       return !exists(/databases/$(database)/documents/examTerms/$(termId)) ||
         !('isLocked' in get(/databases/$(database)/documents/examTerms/$(termId)).data) ||
@@ -77,17 +141,47 @@ service cloud.firestore {
     }
 
     // 3. Entity Validation Blueprints
+    function isValidRoleValue(role) {
+      return role is string && (
+        role == 'super_admin' ||
+        role == 'main_admin' ||
+        role == 'head_teacher' ||
+        role == 'asst_head_teacher' ||
+        role == 'class_teacher' ||
+        role == 'subject_teacher' ||
+        role == 'admin' ||
+        role == 'teacher'
+      );
+    }
+
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'name', 'email', 'photoURL', 'role', 'teacherCode', 'status', 'designation', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'name', 'email', 'photoURL', 'role', 'teacherCode', 'status', 'designation', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'name', 'nameBn', 'email', 'photoURL', 'role',
+          'teacherCode', 'routineAbbreviation', 'status', 'designation',
+          'staffType', 'subject', 'qualification', 'indexNo',
+          'joiningDate', 'phone', 'serial', 'isSenior', 'isLeadership',
+          'createdAt', 'updatedAt'
+        ]) &&
         data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
-        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        (!('nameBn' in data) || (data.nameBn is string && data.nameBn.size() <= 120)) &&
+        data.email is string && data.email.size() >= 0 && data.email.size() <= 160 &&
         data.photoURL is string && data.photoURL.size() <= 500 &&
-        data.role is string && (data.role == 'admin' || data.role == 'teacher') &&
-        data.teacherCode is string && data.teacherCode.size() >= 1 && data.teacherCode.size() <= 12 &&
+        isValidRoleValue(data.role) &&
+        data.teacherCode is string && data.teacherCode.size() >= 1 && data.teacherCode.size() <= 16 &&
+        (!('routineAbbreviation' in data) || (data.routineAbbreviation is string && data.routineAbbreviation.size() <= 24)) &&
         data.status is string && (data.status == 'active' || data.status == 'inactive') &&
-        data.designation is string && data.designation.size() <= 80 &&
+        data.designation is string && data.designation.size() <= 120 &&
+        (!('staffType' in data) || (data.staffType == 'teacher' || data.staffType == 'staff')) &&
+        (!('subject' in data) || (data.subject is string && data.subject.size() <= 120)) &&
+        (!('qualification' in data) || (data.qualification is string && data.qualification.size() <= 160)) &&
+        (!('indexNo' in data) || (data.indexNo is string && data.indexNo.size() <= 64)) &&
+        (!('joiningDate' in data) || (data.joiningDate is string && data.joiningDate.size() <= 64)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 40)) &&
+        (!('serial' in data) || data.serial is number) &&
+        (!('isSenior' in data) || data.isSenior is bool) &&
+        (!('isLeadership' in data) || data.isLeadership is bool) &&
         data.createdAt is string && data.createdAt.size() <= 40 &&
         data.updatedAt is string && data.updatedAt.size() <= 40;
     }
@@ -123,7 +217,13 @@ service cloud.firestore {
 
     function isValidClassSection(data) {
       return data.keys().hasAll(['id', 'academicYearId', 'className', 'section', 'classTeacherUid', 'classTeacherName', 'classTeacherCode', 'roomNumber', 'createdAt']) &&
-        data.keys().hasOnly(['id', 'academicYearId', 'className', 'section', 'classTeacherUid', 'classTeacherName', 'classTeacherCode', 'roomNumber', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'academicYearId', 'className', 'section',
+          'classTeacherUid', 'classTeacherName', 'classTeacherCode',
+          'roomNumber', 'isManualOverride', 'sectionResultStatusByTerm',
+          'sectionSubmittedAtByTerm', 'sectionApprovedAtByTerm',
+          'sectionApprovedByUidByTerm', 'createdAt'
+        ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.academicYearId is string && data.academicYearId.size() >= 1 && data.academicYearId.size() <= 64 && data.academicYearId.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.className is string && (
@@ -136,14 +236,25 @@ service cloud.firestore {
         data.section is string && data.section.size() >= 1 && data.section.size() <= 32 &&
         data.classTeacherUid is string && data.classTeacherUid.size() <= 128 &&
         data.classTeacherName is string && data.classTeacherName.size() <= 120 &&
-        data.classTeacherCode is string && data.classTeacherCode.size() <= 12 &&
+        data.classTeacherCode is string && data.classTeacherCode.size() <= 16 &&
         data.roomNumber is string && data.roomNumber.size() <= 32 &&
+        (!('isManualOverride' in data) || data.isManualOverride is bool) &&
+        (!('sectionResultStatusByTerm' in data) || data.sectionResultStatusByTerm is map) &&
+        (!('sectionSubmittedAtByTerm' in data) || data.sectionSubmittedAtByTerm is map) &&
+        (!('sectionApprovedAtByTerm' in data) || data.sectionApprovedAtByTerm is map) &&
+        (!('sectionApprovedByUidByTerm' in data) || data.sectionApprovedByUidByTerm is map) &&
         data.createdAt is string && data.createdAt.size() <= 40;
     }
 
     function isValidSubjectAssignment(data) {
       return data.keys().hasAll(['id', 'academicYearId', 'classSectionId', 'className', 'section', 'subjectCode', 'subjectName', 'teacherUid', 'teacherName', 'teacherCode', 'maxMarks', 'createdAt']) &&
-        data.keys().hasOnly(['id', 'academicYearId', 'classSectionId', 'className', 'section', 'subjectCode', 'subjectName', 'teacherUid', 'teacherName', 'teacherCode', 'maxMarks', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'academicYearId', 'classSectionId', 'className', 'section',
+          'subjectCode', 'subjectName', 'teacherUid', 'teacherName',
+          'teacherCode', 'maxMarks', 'isManualOverride', 'assignedDaysCount',
+          'statusByTerm', 'submittedAtByTerm', 'submittedByUidByTerm',
+          'createdAt'
+        ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.academicYearId is string && data.academicYearId.size() >= 1 && data.academicYearId.size() <= 64 && data.academicYearId.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.classSectionId is string && data.classSectionId.size() >= 1 && data.classSectionId.size() <= 64 && data.classSectionId.matches('^[a-zA-Z0-9_\\-]+$') &&
@@ -153,8 +264,13 @@ service cloud.firestore {
         data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 100 &&
         data.teacherUid is string && data.teacherUid.size() <= 128 &&
         data.teacherName is string && data.teacherName.size() <= 120 &&
-        data.teacherCode is string && data.teacherCode.size() <= 12 &&
+        data.teacherCode is string && data.teacherCode.size() <= 16 &&
         data.maxMarks is number && data.maxMarks >= 1 && data.maxMarks <= 200 &&
+        (!('isManualOverride' in data) || data.isManualOverride is bool) &&
+        (!('assignedDaysCount' in data) || data.assignedDaysCount is number) &&
+        (!('statusByTerm' in data) || data.statusByTerm is map) &&
+        (!('submittedAtByTerm' in data) || data.submittedAtByTerm is map) &&
+        (!('submittedByUidByTerm' in data) || data.submittedByUidByTerm is map) &&
         data.createdAt is string && data.createdAt.size() <= 40;
     }
 
@@ -199,7 +315,12 @@ service cloud.firestore {
 
     function isValidSubjectMarkRecord(data) {
       return data.keys().hasAll(['id', 'assignmentId', 'termId', 'classSectionId', 'studentId', 'roll', 'studentName', 'writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt']) &&
-        data.keys().hasOnly(['id', 'assignmentId', 'termId', 'classSectionId', 'studentId', 'roll', 'studentName', 'writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'id', 'assignmentId', 'termId', 'classSectionId', 'studentId',
+          'roll', 'studentName', 'writtenMarks', 'mcqMarks', 'practicalMarks',
+          'caMarks', 'totalMarks', 'letterGrade', 'gpa', 'isAbsent',
+          'updatedByUid', 'updatedAt'
+        ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.assignmentId is string && data.assignmentId.size() >= 1 && data.assignmentId.size() <= 64 && data.assignmentId.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.termId is string && data.termId.size() >= 1 && data.termId.size() <= 64 && data.termId.matches('^[a-zA-Z0-9_\\-]+$') &&
@@ -210,9 +331,11 @@ service cloud.firestore {
         data.writtenMarks is number && data.writtenMarks >= 0 && data.writtenMarks <= 200 &&
         data.mcqMarks is number && data.mcqMarks >= 0 && data.mcqMarks <= 200 &&
         data.practicalMarks is number && data.practicalMarks >= 0 && data.practicalMarks <= 200 &&
+        (!('caMarks' in data) || (data.caMarks is number && data.caMarks >= 0 && data.caMarks <= 200)) &&
         data.totalMarks is number && data.totalMarks >= 0 && data.totalMarks <= 200 &&
         data.letterGrade is string && data.letterGrade.size() >= 1 && data.letterGrade.size() <= 8 &&
         data.gpa is number && data.gpa >= 0 && data.gpa <= 5 &&
+        (!('isAbsent' in data) || data.isAbsent is bool) &&
         data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
         data.updatedAt is string && data.updatedAt.size() <= 40;
     }
@@ -250,98 +373,142 @@ service cloud.firestore {
 
     // 4. Collection Rules
 
-    // USERS: Only users with role == 'admin' (isAdmin()) can modify (update/delete) users.
-    // On first sign-in, a verified user can create their own profile (or admin can create any user).
+    // USERS & TEACHERS: Single source of truth for Admin Panel and Public Website.
+    // Super Admin has full control; Main Admin has full control EXCEPT over Super Admin.
     match /users/{userId} {
-      allow get: if isVerifiedUser() && isValidId(userId) && (request.auth.uid == userId || isActiveTeacherOrAdmin());
-      allow list: if isVerifiedUser() && (existing().status == 'active' || isAdmin());
+      allow get: if isValidId(userId) && (existing().status == 'active' || (isVerifiedUser() && (request.auth.uid == userId || isActiveTeacherOrAdmin())));
+      allow list: if existing().status == 'active' || isFullAdmin();
       allow create: if isVerifiedUser() && isValidId(userId) && isValidUserProfile(incoming()) && incoming().uid == userId && (
-        isAdmin() || (
+        (isSuperAdmin() || (isFullAdmin() && incoming().role != 'super_admin')) || (
           request.auth.uid == userId &&
           incoming().email == request.auth.token.email &&
           incoming().status == 'active' &&
           (
-            (isBootstrappedAdmin() && incoming().role == 'admin') ||
-            incoming().role == 'teacher'
+            (isBootstrappedSuperAdmin() && (incoming().role == 'super_admin' || incoming().role == 'admin')) ||
+            incoming().role == 'teacher' ||
+            incoming().role == 'subject_teacher'
           )
         )
       );
-      allow update: if isVerifiedUser() && isValidId(userId) && isValidUserProfile(incoming()) && incoming().uid == existing().uid && isAdmin();
-      allow delete: if isValidId(userId) && isAdmin();
+      allow update: if isVerifiedUser() && isValidId(userId) && isValidUserProfile(incoming()) && incoming().uid == existing().uid &&
+        canAdminModifyUserDoc(existing(), incoming());
+      allow delete: if isValidId(userId) && canAdminDeleteUserDoc(existing());
     }
 
-    // ACADEMIC YEARS: Only role == 'admin' can modify
+    match /teachers/{teacherId} {
+      allow get: if isValidId(teacherId) && (existing().status == 'active' || isActiveTeacherOrAdmin());
+      allow list: if existing().status == 'active' || isFullAdmin();
+      allow create: if isVerifiedUser() && isValidId(teacherId) && isValidUserProfile(incoming()) && incoming().uid == teacherId && (
+        isSuperAdmin() || (isFullAdmin() && incoming().role != 'super_admin')
+      );
+      allow update: if isVerifiedUser() && isValidId(teacherId) && isValidUserProfile(incoming()) && incoming().uid == existing().uid &&
+        canAdminModifyUserDoc(existing(), incoming());
+      allow delete: if isValidId(teacherId) && canAdminDeleteUserDoc(existing());
+    }
+
+    // ACADEMIC YEARS: Only full admin can modify
     match /academicYears/{yearId} {
       allow get: if isVerifiedUser() && isValidId(yearId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().isActive == true || isActiveTeacherOrAdmin());
-      allow create: if isVerifiedUser() && isValidId(yearId) && isValidAcademicYear(incoming()) && incoming().id == yearId && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(yearId) && isValidAcademicYear(incoming()) && incoming().id == existing().id && isAdmin();
-      allow delete: if isValidId(yearId) && isAdmin();
+      allow create: if isVerifiedUser() && isValidId(yearId) && isValidAcademicYear(incoming()) && incoming().id == yearId && isFullAdmin();
+      allow update: if isVerifiedUser() && isValidId(yearId) && isValidAcademicYear(incoming()) && incoming().id == existing().id && isFullAdmin();
+      allow delete: if isValidId(yearId) && isFullAdmin();
     }
 
-    // EXAM TERMS: Only role == 'admin' can modify
+    // EXAM TERMS: Only full admin can modify
     match /examTerms/{termId} {
       allow get: if isVerifiedUser() && isValidId(termId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().isActive == true || isActiveTeacherOrAdmin());
-      allow create: if isVerifiedUser() && isValidId(termId) && isValidExamTerm(incoming()) && incoming().id == termId && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(termId) && isValidExamTerm(incoming()) && incoming().id == existing().id && isAdmin();
-      allow delete: if isValidId(termId) && isAdmin();
+      allow create: if isVerifiedUser() && isValidId(termId) && isValidExamTerm(incoming()) && incoming().id == termId && isFullAdmin();
+      allow update: if isVerifiedUser() && isValidId(termId) && isValidExamTerm(incoming()) && incoming().id == existing().id && isFullAdmin();
+      allow delete: if isValidId(termId) && isFullAdmin();
     }
 
-    // CLASSES (/classSections and /classes): Only users with role == 'admin' can modify
+    // CLASSES (/classSections and /classes): Full admin can modify; Class Teacher or Privileged Reviewer can update section approval status
     match /classSections/{classSectionId} {
       allow get: if isVerifiedUser() && isValidId(classSectionId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().classTeacherUid == request.auth.uid || isActiveTeacherOrAdmin());
-      allow create: if isVerifiedUser() && isValidId(classSectionId) && isValidClassSection(incoming()) && incoming().id == classSectionId && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(classSectionId) && isValidClassSection(incoming()) && incoming().id == existing().id && isAdmin();
-      allow delete: if isValidId(classSectionId) && isAdmin();
+      allow create: if isVerifiedUser() && isValidId(classSectionId) && isValidClassSection(incoming()) && incoming().id == classSectionId && isFullAdmin();
+      allow update: if isVerifiedUser() && isValidId(classSectionId) && isValidClassSection(incoming()) && incoming().id == existing().id && (
+        isFullAdmin() || (
+          (isPrivilegedReviewer() || isAssignedClassTeacherFor(classSectionId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'sectionResultStatusByTerm',
+            'sectionSubmittedAtByTerm',
+            'sectionApprovedAtByTerm',
+            'sectionApprovedByUidByTerm'
+          ])
+        )
+      );
+      allow delete: if isValidId(classSectionId) && isFullAdmin();
     }
 
     match /classes/{classId} {
       allow get: if isVerifiedUser() && isValidId(classId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().classTeacherUid == request.auth.uid || isActiveTeacherOrAdmin());
-      allow create: if isVerifiedUser() && isValidId(classId) && isValidClassSection(incoming()) && incoming().id == classId && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(classId) && isValidClassSection(incoming()) && incoming().id == existing().id && isAdmin();
-      allow delete: if isValidId(classId) && isAdmin();
+      allow create: if isVerifiedUser() && isValidId(classId) && isValidClassSection(incoming()) && incoming().id == classId && isFullAdmin();
+      allow update: if isVerifiedUser() && isValidId(classId) && isValidClassSection(incoming()) && incoming().id == existing().id && (
+        isFullAdmin() || (
+          (isPrivilegedReviewer() || isAssignedClassTeacherFor(classId)) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'sectionResultStatusByTerm',
+            'sectionSubmittedAtByTerm',
+            'sectionApprovedAtByTerm',
+            'sectionApprovedByUidByTerm'
+          ])
+        )
+      );
+      allow delete: if isValidId(classId) && isFullAdmin();
     }
 
-    // SUBJECT ASSIGNMENTS: Only users with role == 'admin' can modify
+    // SUBJECT ASSIGNMENTS: Full admin can modify; assigned teacher or privileged reviewer can update statusByTerm
     match /subjectAssignments/{assignmentId} {
       allow get: if isVerifiedUser() && isValidId(assignmentId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().teacherUid == request.auth.uid || isActiveTeacherOrAdmin());
-      allow create: if isVerifiedUser() && isValidId(assignmentId) && isValidSubjectAssignment(incoming()) && incoming().id == assignmentId && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(assignmentId) && isValidSubjectAssignment(incoming()) && incoming().id == existing().id && isAdmin();
-      allow delete: if isValidId(assignmentId) && isAdmin();
+      allow create: if isVerifiedUser() && isValidId(assignmentId) && isValidSubjectAssignment(incoming()) && incoming().id == assignmentId && isFullAdmin();
+      allow update: if isVerifiedUser() && isValidId(assignmentId) && isValidSubjectAssignment(incoming()) && incoming().id == existing().id && (
+        isFullAdmin() || (
+          (isPrivilegedReviewer() || existing().teacherUid == request.auth.uid) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['statusByTerm', 'submittedAtByTerm', 'submittedByUidByTerm'])
+        )
+      );
+      allow delete: if isValidId(assignmentId) && isFullAdmin();
     }
 
-    // STUDENTS: Only Admin or assigned classTeacherUid for that class can modify
+    // STUDENTS: Only Privileged Reviewer or assigned classTeacherUid for that class can modify
     match /students/{studentId} {
       allow get: if isVerifiedUser() && isValidId(studentId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().status == 'active' || isActiveTeacherOrAdmin());
       allow create: if isVerifiedUser() && isValidId(studentId) && isValidStudent(incoming()) && incoming().id == studentId && (
-        isAdmin() || isAssignedClassTeacherFor(incoming().classSectionId)
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(incoming().classSectionId)
       );
       allow update: if isVerifiedUser() && isValidId(studentId) && isValidStudent(incoming()) && incoming().id == existing().id && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           incoming().classSectionId == existing().classSectionId &&
           isAssignedClassTeacherFor(incoming().classSectionId) &&
           incoming().diff(existing()).affectedKeys().hasOnly(['roll', 'name', 'group', 'optionalSubject', 'guardianPhone', 'status'])
         )
       );
       allow delete: if isValidId(studentId) && (
-        isAdmin() || isAssignedClassTeacherFor(existing().classSectionId)
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(existing().classSectionId)
       );
     }
 
-    // ATTENDANCE (/attendanceRecords and /attendance): Only the assigned classTeacherUid or admin can write to attendance for their class
+    // ATTENDANCE (/attendanceRecords and /attendance): Only the assigned classTeacherUid or Privileged Reviewer can read/write attendance for their class
     match /attendanceRecords/{recordId} {
-      allow get: if isVerifiedUser() && isValidId(recordId) && isActiveTeacherOrAdmin();
-      allow list: if isVerifiedUser() && (existing().markedByUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow get: if isVerifiedUser() && isValidId(recordId) && (
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(existing().classSectionId)
+      );
+      allow list: if isVerifiedUser() && (
+        existing().markedByUid == request.auth.uid ||
+        isPrivilegedReviewer() ||
+        isAssignedClassTeacherFor(existing().classSectionId)
+      );
       allow create: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == recordId && incoming().markedByUid == request.auth.uid && (
-        isAdmin() || isAssignedClassTeacherFor(incoming().classSectionId)
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(incoming().classSectionId)
       );
       allow update: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == existing().id && incoming().markedByUid == request.auth.uid && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           incoming().classSectionId == existing().classSectionId &&
           incoming().date == existing().date &&
           isAssignedClassTeacherFor(incoming().classSectionId) &&
@@ -349,18 +516,24 @@ service cloud.firestore {
         )
       );
       allow delete: if isValidId(recordId) && (
-        isAdmin() || isAssignedClassTeacherFor(existing().classSectionId)
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(existing().classSectionId)
       );
     }
 
     match /attendance/{recordId} {
-      allow get: if isVerifiedUser() && isValidId(recordId) && isActiveTeacherOrAdmin();
-      allow list: if isVerifiedUser() && (existing().markedByUid == request.auth.uid || isActiveTeacherOrAdmin());
+      allow get: if isVerifiedUser() && isValidId(recordId) && (
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(existing().classSectionId)
+      );
+      allow list: if isVerifiedUser() && (
+        existing().markedByUid == request.auth.uid ||
+        isPrivilegedReviewer() ||
+        isAssignedClassTeacherFor(existing().classSectionId)
+      );
       allow create: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == recordId && incoming().markedByUid == request.auth.uid && (
-        isAdmin() || isAssignedClassTeacherFor(incoming().classSectionId)
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(incoming().classSectionId)
       );
       allow update: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) && incoming().id == existing().id && incoming().markedByUid == request.auth.uid && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           incoming().classSectionId == existing().classSectionId &&
           incoming().date == existing().date &&
           isAssignedClassTeacherFor(incoming().classSectionId) &&
@@ -368,34 +541,39 @@ service cloud.firestore {
         )
       );
       allow delete: if isValidId(recordId) && (
-        isAdmin() || isAssignedClassTeacherFor(existing().classSectionId)
+        isPrivilegedReviewer() || isAssignedClassTeacherFor(existing().classSectionId)
       );
     }
 
-    // MARKS (/subjectMarks and /marks): Only the assigned teacherUid or admin can write to marks for their assigned subject
+    // MARKS (/subjectMarks and /marks):
+    // Strict Lock Rule: Once a Subject Teacher submits marks (status == 'submitted'),
+    // NO ONE except super_admin, main_admin, head_teacher, and asst_head_teacher (isPrivilegedReviewer()) can edit or delete those marks.
     match /subjectMarks/{markId} {
       allow get: if isVerifiedUser() && isValidId(markId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().updatedByUid == request.auth.uid || isActiveTeacherOrAdmin());
       allow create: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == markId && incoming().updatedByUid == request.auth.uid && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           isTermUnlocked(incoming().termId) &&
+          isSubjectDraftForTerm(incoming().assignmentId, incoming().termId) &&
           isAssignedSubjectTeacherFor(incoming().assignmentId)
         )
       );
       allow update: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == existing().id && incoming().updatedByUid == request.auth.uid && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           incoming().assignmentId == existing().assignmentId &&
           incoming().termId == existing().termId &&
           incoming().classSectionId == existing().classSectionId &&
           incoming().studentId == existing().studentId &&
           isTermUnlocked(incoming().termId) &&
+          isSubjectDraftForTerm(incoming().assignmentId, incoming().termId) &&
           isAssignedSubjectTeacherFor(incoming().assignmentId) &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['writtenMarks', 'mcqMarks', 'practicalMarks', 'caMarks', 'totalMarks', 'letterGrade', 'gpa', 'isAbsent', 'updatedByUid', 'updatedAt'])
         )
       );
       allow delete: if isValidId(markId) && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           isTermUnlocked(existing().termId) &&
+          isSubjectDraftForTerm(existing().assignmentId, existing().termId) &&
           isAssignedSubjectTeacherFor(existing().assignmentId)
         )
       );
@@ -405,46 +583,49 @@ service cloud.firestore {
       allow get: if isVerifiedUser() && isValidId(markId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().updatedByUid == request.auth.uid || isActiveTeacherOrAdmin());
       allow create: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == markId && incoming().updatedByUid == request.auth.uid && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           isTermUnlocked(incoming().termId) &&
+          isSubjectDraftForTerm(incoming().assignmentId, incoming().termId) &&
           isAssignedSubjectTeacherFor(incoming().assignmentId)
         )
       );
       allow update: if isVerifiedUser() && isValidId(markId) && isValidSubjectMarkRecord(incoming()) && incoming().id == existing().id && incoming().updatedByUid == request.auth.uid && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           incoming().assignmentId == existing().assignmentId &&
           incoming().termId == existing().termId &&
           incoming().classSectionId == existing().classSectionId &&
           incoming().studentId == existing().studentId &&
           isTermUnlocked(incoming().termId) &&
+          isSubjectDraftForTerm(incoming().assignmentId, incoming().termId) &&
           isAssignedSubjectTeacherFor(incoming().assignmentId) &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['writtenMarks', 'mcqMarks', 'practicalMarks', 'totalMarks', 'letterGrade', 'gpa', 'updatedByUid', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['writtenMarks', 'mcqMarks', 'practicalMarks', 'caMarks', 'totalMarks', 'letterGrade', 'gpa', 'isAbsent', 'updatedByUid', 'updatedAt'])
         )
       );
       allow delete: if isValidId(markId) && (
-        isAdmin() || (
+        isPrivilegedReviewer() || (
           isTermUnlocked(existing().termId) &&
+          isSubjectDraftForTerm(existing().assignmentId, existing().termId) &&
           isAssignedSubjectTeacherFor(existing().assignmentId)
         )
       );
     }
 
-    // ROUTINE ENTRIES: Only admin can modify
+    // ROUTINE ENTRIES: Only full admin can modify
     match /routineEntries/{entryId} {
       allow get: if isVerifiedUser() && isValidId(entryId) && isActiveTeacherOrAdmin();
       allow list: if isVerifiedUser() && (existing().period >= 1 || isActiveTeacherOrAdmin());
-      allow create: if isVerifiedUser() && isValidId(entryId) && isValidRoutineRecord(incoming()) && incoming().id == entryId && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(entryId) && isValidRoutineRecord(incoming()) && incoming().id == existing().id && isAdmin();
-      allow delete: if isValidId(entryId) && isAdmin();
+      allow create: if isVerifiedUser() && isValidId(entryId) && isValidRoutineRecord(incoming()) && incoming().id == entryId && isFullAdmin();
+      allow update: if isVerifiedUser() && isValidId(entryId) && isValidRoutineRecord(incoming()) && incoming().id == existing().id && isFullAdmin();
+      allow delete: if isValidId(entryId) && isFullAdmin();
     }
 
-    // NOTICES: Readable by authenticated teachers/admins and writable only by admin
+    // NOTICES: Readable by everyone/authenticated users and writable only by full admin
     match /notices/{noticeId} {
-      allow get: if isVerifiedUser() && isValidId(noticeId) && isActiveTeacherOrAdmin();
-      allow list: if isVerifiedUser() && (existing().isImportant == true || existing().isImportant == false);
-      allow create: if isVerifiedUser() && isValidId(noticeId) && isValidNoticeRecord(incoming()) && incoming().id == noticeId && isAdmin();
-      allow update: if isVerifiedUser() && isValidId(noticeId) && isValidNoticeRecord(incoming()) && incoming().id == existing().id && isAdmin();
-      allow delete: if isValidId(noticeId) && isAdmin();
+      allow get: if isValidId(noticeId);
+      allow list: if existing().isImportant == true || existing().isImportant == false;
+      allow create: if isVerifiedUser() && isValidId(noticeId) && isValidNoticeRecord(incoming()) && incoming().id == noticeId && isFullAdmin();
+      allow update: if isVerifiedUser() && isValidId(noticeId) && isValidNoticeRecord(incoming()) && incoming().id == existing().id && isFullAdmin();
+      allow delete: if isValidId(noticeId) && isFullAdmin();
     }
   }
 }

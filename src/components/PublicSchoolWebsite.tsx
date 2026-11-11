@@ -49,7 +49,7 @@ import {
   formatBengaliLiveDate,
 } from '../data/schoolWebsiteData';
 import { NoticeRecord } from '../types/school';
-import { formatNumeral } from '../utils/schoolLogic';
+import { formatNumeral, isFullAdminUser, sortStaffByHierarchy, sortTeachersByHierarchy } from '../utils/schoolLogic';
 import { MarksheetTranscriptView } from './MarksheetTranscriptView';
 import {
   compileClassTabulationFromFirestore,
@@ -264,15 +264,82 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
     [students, subjectMarks, selectedClassFilter, activeExamTerm, selectedSessionYear]
   );
 
+  const liveTeachersDirectory = useMemo<PublicTeacherDirectoryItem[]>(() => {
+    const teacherUsers = users.filter((u) => (u.staffType || 'teacher') === 'teacher');
+    if (teacherUsers.length === 0) {
+      return PUBLIC_TEACHERS_DIRECTORY;
+    }
+    const sortedTeachers = sortTeachersByHierarchy(teacherUsers);
+    return sortedTeachers.map((u, idx) => {
+      const fallbackMatch = PUBLIC_TEACHERS_DIRECTORY.find(
+        (d) => d.teacherCode.toUpperCase() === (u.teacherCode || '').toUpperCase()
+      );
+      const isSeniorFlag =
+        u.isSenior !== undefined
+           ? u.isSenior
+           : u.role === 'head_teacher' ||
+             u.role === 'asst_head_teacher' ||
+             (u.designation || '').includes('প্রধান') ||
+             (u.designation || '').includes('সিনিয়র') ||
+             Boolean(fallbackMatch?.isSenior);
+      return {
+        id: u.uid,
+        serial: u.serial ?? idx + 1,
+        name: u.nameBn || fallbackMatch?.name || u.name,
+        designation: u.designation || fallbackMatch?.designation || 'সহকারী শিক্ষক',
+        subject: u.subject || fallbackMatch?.subject || 'সাধারণ শিক্ষা',
+        phone: u.phone !== undefined ? u.phone : fallbackMatch?.phone || '',
+        email: u.email !== undefined ? u.email : fallbackMatch?.email || '',
+        photoUrl: u.photoURL !== undefined ? u.photoURL : fallbackMatch?.photoUrl || '',
+        isSenior: isSeniorFlag,
+        teacherCode: u.routineAbbreviation || u.teacherCode || fallbackMatch?.teacherCode || 'T',
+      };
+    });
+  }, [users]);
+
+  const liveStaffDirectory = useMemo(() => {
+    const staffUsers = users.filter((u) => u.staffType === 'staff');
+    if (staffUsers.length === 0) {
+      return PUBLIC_STAFF_DIRECTORY;
+    }
+    const sortedStaff = sortStaffByHierarchy(staffUsers);
+    return sortedStaff.map((u, idx) => {
+      const fallbackMatch = PUBLIC_STAFF_DIRECTORY.find(
+        (s) =>
+          s.id === u.uid ||
+          (u.indexNo && s.indexNo === u.indexNo) ||
+          s.name === (u.nameBn || u.name)
+      );
+      return {
+        id: u.uid,
+        serial: u.serial ?? idx + 1,
+        name: u.nameBn || fallbackMatch?.name || u.name,
+        designation: u.designation || fallbackMatch?.designation || 'অফিস সহায়ক',
+        indexNo: u.indexNo || fallbackMatch?.indexNo || 'N/A',
+        phone: u.phone !== undefined ? u.phone : fallbackMatch?.phone || '',
+      };
+    });
+  }, [users]);
+
+  const seniorTeachersCount = useMemo(
+    () => liveTeachersDirectory.filter((t) => t.isSenior).length,
+    [liveTeachersDirectory]
+  );
+
+  const assistantTeachersCount = useMemo(
+    () => liveTeachersDirectory.filter((t) => !t.isSenior).length,
+    [liveTeachersDirectory]
+  );
+
   const filteredTeachers = useMemo(() => {
     if (teacherFilterMode === 'SENIOR') {
-      return PUBLIC_TEACHERS_DIRECTORY.filter((t) => t.isSenior);
+      return liveTeachersDirectory.filter((t) => t.isSenior);
     }
     if (teacherFilterMode === 'ASSISTANT') {
-      return PUBLIC_TEACHERS_DIRECTORY.filter((t) => !t.isSenior);
+      return liveTeachersDirectory.filter((t) => !t.isSenior);
     }
-    return PUBLIC_TEACHERS_DIRECTORY;
-  }, [teacherFilterMode]);
+    return liveTeachersDirectory;
+  }, [teacherFilterMode, liveTeachersDirectory]);
 
   const handlePortalAction = () => {
     if (currentUser) {
@@ -699,8 +766,11 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
               <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
                 অভিজ্ঞ শিক্ষক
               </p>
-              <div className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mt-1 tabular-nums">
-                ১৫ জন
+              <div
+                data-testid="public-kpi-teachers-count"
+                className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mt-1 tabular-nums"
+              >
+                {num(liveTeachersDirectory.length)} জন
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
                 প্রধান শিক্ষক, সিনিয়র ও সহকারী শিক্ষকবৃন্দ
@@ -716,8 +786,11 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
               <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
                 নন-টিচিং স্টাফ
               </p>
-              <div className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mt-1 tabular-nums">
-                ৭ জন
+              <div
+                data-testid="public-kpi-staff-count"
+                className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mt-1 tabular-nums"
+              >
+                {num(liveStaffDirectory.length)} জন
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
                 কম্পিউটার ল্যাব, অফিস ও নিরাপত্তা কর্মী
@@ -1174,7 +1247,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
                 </h2>
               </div>
 
-              {currentUser?.role === 'admin' && (
+              {isFullAdminUser(currentUser) && (
                 <button
                   type="button"
                   onClick={() => setNoticeEditorOpen(true)}
@@ -1234,7 +1307,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
                       <span>পূর্ণাঙ্গ নোটিশ পড়ুন →</span>
                     </button>
 
-                    {currentUser?.role === 'admin' && (
+                    {isFullAdminUser(currentUser) && (
                       <button
                         type="button"
                         onClick={() => deleteNotice(notice.id)}
@@ -1330,15 +1403,15 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
         </div>
       </section>
 
-      {/* 7. Complete Teachers Directory (আমাদের শিক্ষকমণ্ডলী - 15 Teachers) */}
+      {/* 7. Complete Teachers Directory (আমাদের শিক্ষকমণ্ডলী - Live Teachers) */}
       <section id="teachers" className="py-16 px-4 sm:px-6 max-w-7xl mx-auto w-full">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-teal-700 dark:text-teal-400">
-              Faculty Directory · 15 Dedicated Educators
+              Faculty Directory · {liveTeachersDirectory.length} Dedicated Educators
             </span>
             <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mt-1">
-              আমাদের শিক্ষকমণ্ডলী (১৫ জন)
+              আমাদের শিক্ষকমণ্ডলী ({num(liveTeachersDirectory.length)} জন)
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
               প্রধান শিক্ষক, সহকারী প্রধান শিক্ষক, সিনিয়র শিক্ষক ও সহকারী শিক্ষকবৃন্দের তালিকা ও সরাসরি যোগাযোগের মাধ্যম
@@ -1356,7 +1429,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
                   : 'text-slate-700 dark:text-slate-300'
               }`}
             >
-              সকল শিক্ষক ({num(15)})
+              সকল শিক্ষক ({num(liveTeachersDirectory.length)})
             </button>
             <button
               type="button"
@@ -1367,7 +1440,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
                   : 'text-slate-700 dark:text-slate-300'
               }`}
             >
-              প্রধান ও সিনিয়র শিক্ষক ({num(7)})
+              প্রধান ও সিনিয়র শিক্ষক ({num(seniorTeachersCount)})
             </button>
             <button
               type="button"
@@ -1378,7 +1451,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
                   : 'text-slate-700 dark:text-slate-300'
               }`}
             >
-              সহকারী শিক্ষক ({num(8)})
+              সহকারী শিক্ষক ({num(assistantTeachersCount)})
             </button>
           </div>
         </div>
@@ -1486,7 +1559,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
         </div>
       </section>
 
-      {/* 8. Non-Teaching Staff Directory (নন-টিচিং স্টাফ - 7 Staff) */}
+      {/* 8. Non-Teaching Staff Directory (নন-টিচিং স্টাফ - Live Staff) */}
       <section
         id="staff"
         className="py-16 bg-slate-100/80 dark:bg-slate-900/50 border-t border-slate-200/80 dark:border-slate-800/80 px-4 sm:px-6"
@@ -1497,7 +1570,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
               Administrative & Support Staff
             </span>
             <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mt-1">
-              নন-টিচিং স্টাফ (৭ জন)
+              নন-টিচিং স্টাফ ({num(liveStaffDirectory.length)} জন)
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
               বিদ্যালয়ের প্রশাসনিক, কম্পিউটার ল্যাব, নিরাপত্তা ও সেবা কার্যক্রমে নিয়োজিত কর্মচারীবৃন্দ
@@ -1505,7 +1578,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {PUBLIC_STAFF_DIRECTORY.map((staff) => {
+            {liveStaffDirectory.map((staff) => {
               const waUrl = buildWhatsAppUrl(staff.phone);
               return (
                 <div

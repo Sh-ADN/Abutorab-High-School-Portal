@@ -7,6 +7,7 @@ import {
   HeaderBar,
   MobileBottomNav,
   PortalSidebar,
+  ViewAsActiveBanner,
 } from './components/HeaderBar';
 import { TeacherDashboard } from './components/TeacherDashboard';
 import { StudentRosterPanel } from './components/StudentRosterPanel';
@@ -15,6 +16,7 @@ import { SubjectMarksModule } from './components/SubjectMarksModule';
 import { ResultAndTabulationModule } from './components/ResultAndTabulationModule';
 import { SchoolRoutineModule } from './components/SchoolRoutineModule';
 import { AdminControlCenter } from './components/AdminControlCenter';
+import { isFullAdminUser } from './utils/schoolLogic';
 
 const PortalShell: React.FC = () => {
   const { currentUser, activeView, showPublicWebsite, num } = useSchool();
@@ -34,6 +36,7 @@ const PortalShell: React.FC = () => {
   if (currentUser.status === 'inactive') {
     return (
       <div className="min-h-screen bg-[#f8fafc] dark:bg-[#0f172a] flex flex-col">
+        <ViewAsActiveBanner />
         <HeaderBar />
         <main className="flex-1 flex items-center justify-center p-6">
           <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/60 rounded-xl p-6 text-center space-y-3">
@@ -41,7 +44,7 @@ const PortalShell: React.FC = () => {
               Account Currently Deactivated
             </h1>
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              Your teacher account ({currentUser.email}) has been marked inactive by a school
+              Your teacher account ({currentUser.email || currentUser.name}) has been marked inactive by a school
               administrator. Please contact the Headmaster or System Administrators (
               <span className="font-mono">SH — Shahadat Hossain, ADN — Ananneya Debnath</span>) to
               restore access.
@@ -52,7 +55,7 @@ const PortalShell: React.FC = () => {
     );
   }
 
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isFullAdminUser(currentUser);
 
   return (
     <div id="top" className="min-h-screen bg-[#f8fafc] dark:bg-[#0f172a] print:bg-white">
@@ -61,6 +64,7 @@ const PortalShell: React.FC = () => {
 
       {/* Main Content Area (lg:pl-60 to account for fixed sidebar, reset on print) */}
       <div className="lg:pl-60 print:pl-0 print:pb-0 print:bg-white flex flex-col min-h-screen min-w-0 transition-all">
+        <ViewAsActiveBanner />
         <HeaderBar />
 
         <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-24 lg:pb-10 print:p-0 print:pb-0 print:max-w-none print:bg-white">

@@ -2,27 +2,30 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Teacher or Administrator account registered via Google Sign-In.",
+      "description": "Teacher, Staff, or Administrator account in the dynamic school directory and portal.",
       "type": "object",
       "properties": {
         "uid": {
           "type": "string",
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Firebase Auth UID or teacher record identifier."
+          "description": "Firebase Auth UID or teacher/staff record identifier."
         },
         "name": {
           "type": "string",
           "minLength": 1,
           "maxLength": 120,
-          "description": "Full display name of the teacher or admin."
+          "description": "Display name (Bengali or English)."
+        },
+        "nameBn": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Bengali full name."
         },
         "email": {
           "type": "string",
-          "minLength": 3,
           "maxLength": 160,
-          "format": "email",
-          "description": "Google account email address."
+          "description": "Optional Google account email address."
         },
         "photoURL": {
           "type": "string",
@@ -31,14 +34,28 @@
         },
         "role": {
           "type": "string",
-          "enum": ["admin", "teacher"],
-          "description": "System access role."
+          "enum": [
+            "super_admin",
+            "main_admin",
+            "head_teacher",
+            "asst_head_teacher",
+            "class_teacher",
+            "subject_teacher",
+            "admin",
+            "teacher"
+          ],
+          "description": "System access role in the school hierarchy."
         },
         "teacherCode": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 12,
-          "description": "Short teacher initials code (e.g., AD, MR, SK)."
+          "maxLength": 16,
+          "description": "Short teacher initials code (e.g., ADN, SH, HM)."
+        },
+        "routineAbbreviation": {
+          "type": "string",
+          "maxLength": 24,
+          "description": "Optional routine abbreviation linked via dot-insensitive normalization."
         },
         "status": {
           "type": "string",
@@ -47,8 +64,42 @@
         },
         "designation": {
           "type": "string",
-          "maxLength": 80,
-          "description": "Academic designation (e.g., Senior Teacher, Headmaster)."
+          "maxLength": 120,
+          "description": "Academic or staff designation."
+        },
+        "staffType": {
+          "type": "string",
+          "enum": ["teacher", "staff"],
+          "description": "Distinguishes teaching faculty from administrative/support staff."
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "qualification": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "indexNo": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "joiningDate": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "serial": {
+          "type": "number"
+        },
+        "isSenior": {
+          "type": "boolean"
+        },
+        "isLeadership": {
+          "type": "boolean"
         },
         "createdAt": {
           "type": "string",
@@ -136,7 +187,7 @@
     },
     "ClassSection": {
       "title": "ClassSection",
-      "description": "Class and Section unit (Class 6 to Class 10, Section A/B or Ka/Kha) with assigned Class Teacher.",
+      "description": "Class and Section unit (Class 6 to Class 10, Section A/B or Ka/Kha) with assigned Class Teacher and multi-stage approval status.",
       "type": "object",
       "properties": {
         "id": {
@@ -168,11 +219,26 @@
         },
         "classTeacherCode": {
           "type": "string",
-          "maxLength": 12
+          "maxLength": 16
         },
         "roomNumber": {
           "type": "string",
           "maxLength": 32
+        },
+        "isManualOverride": {
+          "type": "boolean"
+        },
+        "sectionResultStatusByTerm": {
+          "type": "object"
+        },
+        "sectionSubmittedAtByTerm": {
+          "type": "object"
+        },
+        "sectionApprovedAtByTerm": {
+          "type": "object"
+        },
+        "sectionApprovedByUidByTerm": {
+          "type": "object"
         },
         "createdAt": {
           "type": "string",
@@ -183,7 +249,7 @@
     },
     "SubjectAssignment": {
       "title": "SubjectAssignment",
-      "description": "Maps a specific Subject in a Class & Section to a Teacher with Marks Entry permission.",
+      "description": "Maps a specific Subject in a Class & Section to a Teacher with Marks Entry and locking state.",
       "type": "object",
       "properties": {
         "id": {
@@ -229,10 +295,25 @@
         },
         "teacherCode": {
           "type": "string",
-          "maxLength": 12
+          "maxLength": 16
         },
         "maxMarks": {
           "type": "number"
+        },
+        "isManualOverride": {
+          "type": "boolean"
+        },
+        "assignedDaysCount": {
+          "type": "number"
+        },
+        "statusByTerm": {
+          "type": "object"
+        },
+        "submittedAtByTerm": {
+          "type": "object"
+        },
+        "submittedByUidByTerm": {
+          "type": "object"
         },
         "createdAt": {
           "type": "string",
@@ -302,7 +383,7 @@
     },
     "AttendanceRecord": {
       "title": "AttendanceRecord",
-      "description": "Daily class attendance summary recorded by the assigned Class Teacher or Admin.",
+      "description": "Daily class attendance summary recorded by the assigned Class Teacher or Privileged Reviewer.",
       "type": "object",
       "properties": {
         "id": {
@@ -343,7 +424,7 @@
     },
     "SubjectMarkRecord": {
       "title": "SubjectMarkRecord",
-      "description": "Student exam marks entry recorded by the assigned Subject Teacher or Admin.",
+      "description": "Student exam marks entry recorded by the assigned Subject Teacher or Privileged Reviewer.",
       "type": "object",
       "properties": {
         "id": {
@@ -387,6 +468,9 @@
         "practicalMarks": {
           "type": "number"
         },
+        "caMarks": {
+          "type": "number"
+        },
         "totalMarks": {
           "type": "number"
         },
@@ -396,6 +480,9 @@
         },
         "gpa": {
           "type": "number"
+        },
+        "isAbsent": {
+          "type": "boolean"
         },
         "updatedByUid": {
           "type": "string",
@@ -502,7 +589,11 @@
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
-      "description": "Registered teacher and admin profiles."
+      "description": "Registered teacher, staff, and admin profiles."
+    },
+    "/teachers/{teacherId}": {
+      "schema": "UserProfile",
+      "description": "Live single-source-of-truth teacher and staff directory."
     },
     "/academicYears/{yearId}": {
       "schema": "AcademicYear",

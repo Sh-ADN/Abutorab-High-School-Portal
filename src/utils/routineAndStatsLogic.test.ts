@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import {
   ATTACHED_ROUTINE_RAW,
   computeTeacherStatistics,
+  deriveClassTeachersAndSubjectAssignmentsFromRoutine,
   expandRoutineRecordsToEntries,
   isClassMatch,
   parseDaysExpression,
   parseLiveMasterGridToRoutineRecords,
   SEED_ROUTINE_RECORDS,
 } from './routineAndStatsLogic';
+import { SEED_CLASS_SECTIONS, SEED_SUBJECT_ASSIGNMENTS, SEED_USERS } from '../data/seedData';
 
 test('ClassUtils.isClassMatch matches exact sections and base class umbrella entries', () => {
   assert.equal(isClassMatch('IX-A', 'IX-A'), true);
@@ -29,16 +31,6 @@ test('parseDaysExpression expands range, single day, and comma-separated day exp
 
 test('TeacherStatistics.computeTeacherStatistics replicates TeacherStatistics.kt calculations accurately', () => {
   const allExpanded = expandRoutineRecordsToEntries(SEED_ROUTINE_RECORDS);
-  // Test for A.D.N.
-  // A.D.N. has:
-  // (2-6) IX-B P1 Math -> 5 days * 45m = 225m
-  // (2-6) VI-A P3 Math -> 5 days * 40m = 200m
-  // (4-6) X P4 Geo -> 3 days * 40m = 120m
-  // (4-6) VI-B P5 G.Sci -> 3 days * 40m = 120m
-  // (2-4) IX P6 Phy -> 3 days * 40m = 120m
-  // (4-6) X P7 Phy -> 3 days * 40m = 120m
-  // Total weekly classes = 5 + 5 + 3 + 3 + 3 + 3 = 22 classes
-  // Total minutes = 225 + 200 + 120 + 120 + 120 + 120 = 905m = 15h 5m
   const adnEntries = allExpanded.filter((e) => e.teacher === 'A.D.N.');
   const stats = computeTeacherStatistics(adnEntries, 'A.D.N.');
 
@@ -46,11 +38,10 @@ test('TeacherStatistics.computeTeacherStatistics replicates TeacherStatistics.kt
   assert.equal(stats.totalTeachingHoursStr, '15h 5m');
   assert.equal(stats.uniqueClasses, 3); // IX, VI, X
   assert.equal(stats.uniqueSubjects, 6);
-  assert.equal(stats.averageClasses, '4.4'); // 22 / 5 = 4.4
+  assert.equal(stats.averageClasses, '4.4');
   assert.ok(stats.busiestWeekdayStr.includes('Tuesday (6 classes)'));
   assert.ok(stats.leastBusyWeekdayStr.includes('3 classes'));
 
-  // Test "-1 & 2" subject expansion rule from TeacherStatistics.kt (e.g., S.B. has "Ben-1 & 2" in VII-A)
   const sbEntries = allExpanded.filter((e) => e.teacher === 'S.B.');
   const sbStats = computeTeacherStatistics(sbEntries, 'S.B.');
   assert.ok(sbStats.uniqueSubjectsList.includes('Ben-1-VII-A'));
@@ -85,4 +76,73 @@ test('parseLiveMasterGridToRoutineRecords converts Google Apps Script getFullDat
   assert.equal(parsed[2].teacher, 'A.D.N.');
   assert.equal(parsed[2].period, 1);
   assert.equal(parsed[2].days, '(2-6)');
+});
+
+test('deriveClassTeachersAndSubjectAssignmentsFromRoutine enforces Rule A (1st Period Class Teacher), Rule B (Majority-Day Subject Teacher), and Rule C (Manual Override)', () => {
+  const derived = deriveClassTeachersAndSubjectAssignmentsFromRoutine({
+    routineRecords: SEED_ROUTINE_RECORDS,
+    teachers: SEED_USERS,
+    classSections: SEED_CLASS_SECTIONS,
+    existingAssignments: SEED_SUBJECT_ASSIGNMENTS,
+    academicYearId: 'ay_2026',
+  });
+
+  // All 10 class-sections exist and have 1st period Class Teachers assigned
+  assert.equal(derived.updatedClassSections.length, 10);
+
+  const expectedFirstPeriodCodes: Record<string, string> = {
+    cs_2026_c6_ka: 'H.P.',
+    cs_2026_c6_kha: 'J.H.',
+    cs_2026_c7_ka: 'S.B.',
+    cs_2026_c7_kha: 'N.I.',
+    cs_2026_c8_a: 'A.B.S',
+    cs_2026_c8_b: 'F.H.',
+    cs_2026_c9_a: 'MSI',
+    cs_2026_c9_b: 'ADN', // A.D.N. normalized matches ADN profile
+    cs_2026_c10_a: 'G.M.',
+    cs_2026_c10_b: 'M.A.',
+  };
+
+  for (const section of derived.updatedClassSections) {
+    assert.equal(
+      section.classTeacherCode,
+      expectedFirstPeriodCodes[section.id],
+      `Expected ${section.id} 1st period teacher to be ${expectedFirstPeriodCodes[section.id]}`
+    );
+  }
+
+  // Rule B: Majority-Day Subject Teacher assignment test
+  // In Class 6 Section Kha (VI-B), G.Science is taught by A.D.N. on (4-6) = 3 days, and S.D. on (2-3) = 2 days.
+  // So A.D.N. (3 days > 2 days) must win G.Science (127) for cs_2026_c6_kha!
+  const viBScience = derived.updatedSubjectAssignments.find(
+    (a) => a.classSectionId === 'cs_2026_c6_kha' && a.subjectCode === '127'
+  );
+  assert.ok(viBScience);
+  assert.equal(viBScience?.teacherCode, 'ADN');
+  assert.equal(viBScience?.assignedDaysCount, 3);
+
+  // Rule C: Manual override preservation test
+  const manualSection = derived.updatedClassSections.map((s) =>
+    s.id === 'cs_2026_c6_ka'
+      ? {
+          ...s,
+          classTeacherUid: 'usr_hm_1_HM',
+          classTeacherName: 'মরজাহান বেগম',
+          classTeacherCode: 'H.M.',
+          isManualOverride: true,
+        }
+      : s
+  );
+
+  const reDerived = deriveClassTeachersAndSubjectAssignmentsFromRoutine({
+    routineRecords: SEED_ROUTINE_RECORDS,
+    teachers: SEED_USERS,
+    classSections: manualSection,
+    existingAssignments: derived.updatedSubjectAssignments,
+    academicYearId: 'ay_2026',
+  });
+
+  const cs6aAfter = reDerived.updatedClassSections.find((s) => s.id === 'cs_2026_c6_ka');
+  assert.equal(cs6aAfter?.classTeacherCode, 'H.M.');
+  assert.equal(cs6aAfter?.isManualOverride, true);
 });

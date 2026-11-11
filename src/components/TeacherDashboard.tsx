@@ -20,6 +20,14 @@ import {
   PERIOD_SCHEDULE,
   resolveRoutineTeacherCodeForUser,
 } from '../utils/routineAndStatsLogic';
+import {
+  canManageClassRosterAndAttendance,
+  getSubjectSubmissionStatus,
+  isAssignedClassTeacherForSection,
+  isAssignedSubjectTeacher,
+  isFullAdminUser,
+  isPrivilegedReviewerUser,
+} from '../utils/schoolLogic';
 
 export const TeacherDashboard: React.FC = () => {
   const {
@@ -46,7 +54,8 @@ export const TeacherDashboard: React.FC = () => {
 
   if (!currentUser) return null;
 
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isFullAdminUser(currentUser);
+  const isReviewer = isPrivilegedReviewerUser(currentUser);
   const activeYear = academicYears.find((y) => y.id === selectedAcademicYearId);
   const activeTerm = examTerms.find((t) => t.id === selectedTermId);
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -64,15 +73,15 @@ export const TeacherDashboard: React.FC = () => {
     }
   }, [todayIso]);
 
-  // Assigned Class Teacher sections (or all sections for Admin)
+  // Assigned Class Teacher sections (or all sections for Admin / Head Teacher / Asst Head Teacher)
   const myClassTeacherSections = useMemo(
     () =>
       classSections.filter(
         (cs) =>
           cs.academicYearId === selectedAcademicYearId &&
-          (cs.classTeacherUid === currentUser.uid || isAdmin)
+          canManageClassRosterAndAttendance(currentUser, cs)
       ),
-    [classSections, selectedAcademicYearId, currentUser.uid, isAdmin]
+    [classSections, selectedAcademicYearId, currentUser]
   );
 
   const directClassTeacherSections = useMemo(
@@ -80,9 +89,9 @@ export const TeacherDashboard: React.FC = () => {
       classSections.filter(
         (cs) =>
           cs.academicYearId === selectedAcademicYearId &&
-          cs.classTeacherUid === currentUser.uid
+          isAssignedClassTeacherForSection(currentUser, cs)
       ),
-    [classSections, selectedAcademicYearId, currentUser.uid]
+    [classSections, selectedAcademicYearId, currentUser]
   );
 
   const mySubjectAssignments = useMemo(
@@ -90,9 +99,9 @@ export const TeacherDashboard: React.FC = () => {
       subjectAssignments.filter(
         (asg) =>
           asg.academicYearId === selectedAcademicYearId &&
-          (asg.teacherUid === currentUser.uid || isAdmin)
+          (isAssignedSubjectTeacher(currentUser, asg) || isReviewer)
       ),
-    [subjectAssignments, selectedAcademicYearId, currentUser.uid, isAdmin]
+    [subjectAssignments, selectedAcademicYearId, currentUser, isReviewer]
   );
 
   // Expand routine records into daily entries
@@ -546,8 +555,16 @@ export const TeacherDashboard: React.FC = () => {
                         <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-teal-100/80 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
                           {asg.className} · শাখা {asg.section}
                         </span>
-                        <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums">
-                          কোড: {num(asg.subjectCode)} · পূর্ণমান: {num(asg.maxMarks)}
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            getSubjectSubmissionStatus(asg, selectedTermId) === 'submitted'
+                              ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300'
+                              : 'bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300'
+                          }`}
+                        >
+                          {getSubjectSubmissionStatus(asg, selectedTermId) === 'submitted'
+                            ? 'জমাদানকৃত 🔒'
+                            : 'খসড়া (Draft)'}
                         </span>
                       </div>
 
@@ -556,7 +573,7 @@ export const TeacherDashboard: React.FC = () => {
                       </h4>
 
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        বিষয় শিক্ষক: {asg.teacherName} ({asg.teacherCode})
+                        বিষয় শিক্ষক: {asg.teacherName} ({asg.teacherCode}) · পূর্ণমান: {num(asg.maxMarks)}
                       </p>
                     </div>
 

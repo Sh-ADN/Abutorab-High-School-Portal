@@ -1,14 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Award,
+  CheckCircle2,
   Download,
   FileText,
   Layers,
+  Lock,
   Maximize2,
   Minimize2,
   Printer,
   Search,
+  Send,
+  ShieldCheck,
   Table,
+  Unlock,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -23,6 +28,12 @@ import {
   TabulationDisplay,
   TabulationEngine,
 } from '../utils/tabulationAndMeritEngine';
+import {
+  getSectionApprovalStatus,
+  getSubjectSubmissionStatus,
+  isAssignedClassTeacherForSection,
+  isPrivilegedReviewerUser,
+} from '../utils/schoolLogic';
 import { MarksheetTranscriptView } from './MarksheetTranscriptView';
 
 type ResultSubTab =
@@ -33,6 +44,7 @@ type ResultSubTab =
 
 export const ResultAndTabulationModule: React.FC = () => {
   const {
+    currentUser,
     academicYears,
     examTerms,
     classSections,
@@ -43,6 +55,12 @@ export const ResultAndTabulationModule: React.FC = () => {
     selectedAcademicYearId,
     selectedTermId,
     setSelectedTermId,
+    setSelectedMarksAssignmentId,
+    setActiveView,
+    unlockSubjectMarksToDraft,
+    submitSectionResultsForApproval,
+    approveSectionResults,
+    unlockSectionResultsToDraft,
     num,
   } = useSchool();
 
@@ -89,6 +107,31 @@ export const ResultAndTabulationModule: React.FC = () => {
   const activeSection = useMemo(
     () => yearSections.find((cs) => cs.id === selectedClassSectionId) || null,
     [yearSections, selectedClassSectionId]
+  );
+
+  const [workflowFeedback, setWorkflowFeedback] = useState<string>('');
+
+  const isReviewer = isPrivilegedReviewerUser(currentUser);
+  const isSectionClassTeacher = isAssignedClassTeacherForSection(currentUser, activeSection);
+
+  const sectionApprovalStatus = useMemo(
+    () => getSectionApprovalStatus(activeSection, activeTerm?.id),
+    [activeSection, activeTerm?.id]
+  );
+
+  const sectionSubjectAssignments = useMemo(
+    () =>
+      subjectAssignments.filter(
+        (a) =>
+          a.academicYearId === selectedAcademicYearId &&
+          a.classSectionId === selectedClassSectionId
+      ),
+    [subjectAssignments, selectedAcademicYearId, selectedClassSectionId]
+  );
+
+  const sectionAttendanceRecords = useMemo(
+    () => attendanceRecords.filter((r) => r.classSectionId === selectedClassSectionId),
+    [attendanceRecords, selectedClassSectionId]
   );
 
   const classStudents = useMemo(
@@ -491,6 +534,190 @@ export const ResultAndTabulationModule: React.FC = () => {
           </span>
         </div>
       </div>
+
+      {/* CLASS TEACHER CONSOLIDATED SECTION VIEW & MULTI-STAGE RESULT APPROVAL PANEL */}
+      {activeSection && activeTerm && (
+        <div
+          data-testid="section-consolidated-approval-panel"
+          className="no-print bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-900/70 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs"
+        >
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-3.5">
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-teal-50 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>শ্রেণি শিক্ষক কনসোলিডেটেড সেকশন ভিউ ও অনুমোদন</span>
+                </span>
+                <span
+                  data-testid="badge-section-approval-status"
+                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                    sectionApprovalStatus === 'approved'
+                      ? 'bg-emerald-600 text-white'
+                      : sectionApprovalStatus === 'submitted_for_approval'
+                      ? 'bg-amber-500 text-slate-950'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  {sectionApprovalStatus === 'approved'
+                    ? '✓ প্রধান শিক্ষক কর্তৃক চূড়ান্ত অনুমোদিত (Approved)'
+                    : sectionApprovalStatus === 'submitted_for_approval'
+                    ? '⏳ প্রধান শিক্ষকের অনুমোদনের অপেক্ষায় (Submitted for Approval)'
+                    : '📝 চলমান / খসড়া (Draft)'}
+                </span>
+              </div>
+
+              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                {activeSection.className} ({activeSection.section}) — শ্রেণি শিক্ষক:{' '}
+                <span className="text-teal-700 dark:text-teal-400">
+                  {activeSection.classTeacherName} [{activeSection.classTeacherCode}]
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                মোট শিক্ষার্থী: <strong>{num(classStudents.length)}</strong> জন · গৃহীত হাজিরা দিবস:{' '}
+                <strong>{num(sectionAttendanceRecords.length)}</strong> দিন · নির্ধারিত বিষয়:{' '}
+                <strong>{num(sectionSubjectAssignments.length)}</strong>টি
+              </p>
+            </div>
+
+            {/* Multi-Stage Action Buttons for Class Teacher & Head Teacher / Asst Head Teacher / Admin */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {(isSectionClassTeacher || isReviewer) &&
+                sectionApprovalStatus === 'draft' && (
+                  <button
+                    data-testid="btn-submit-section-for-approval"
+                    type="button"
+                    onClick={async () => {
+                      await submitSectionResultsForApproval(activeSection.id, activeTerm.id);
+                      setWorkflowFeedback(
+                        `✓ ${activeSection.className} (${activeSection.section})-এর ফলাফল প্রধান শিক্ষকের অনুমোদনের জন্য জমা দেওয়া হয়েছে।`
+                      );
+                    }}
+                    className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-[#0d5c56] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>প্রধান শিক্ষকের অনুমোদনের জন্য জমা দিন</span>
+                  </button>
+                )}
+
+              {isReviewer && sectionApprovalStatus !== 'approved' && (
+                <button
+                  data-testid="btn-approve-section-results"
+                  type="button"
+                  onClick={async () => {
+                    await approveSectionResults(activeSection.id, activeTerm.id);
+                    setWorkflowFeedback(
+                      `✓ ${activeSection.className} (${activeSection.section})-এর চূড়ান্ত ফলাফল অনুমোদন (Approved) করা হয়েছে!`
+                    );
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>চূড়ান্ত অনুমোদন দিন (Approve Section Results)</span>
+                </button>
+              )}
+
+              {isReviewer && sectionApprovalStatus !== 'draft' && (
+                <button
+                  data-testid="btn-unlock-section-results"
+                  type="button"
+                  onClick={async () => {
+                    await unlockSectionResultsToDraft(activeSection.id, activeTerm.id);
+                    setWorkflowFeedback(
+                      `🔓 ${activeSection.className} (${activeSection.section})-এর ফলাফল পুনরায় খসড়া অবস্থায় আনলক করা হয়েছে।`
+                    );
+                  }}
+                  className="px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>খসড়ায় ফেরত পাঠান</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {workflowFeedback && (
+            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-3.5 py-2.5 text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{workflowFeedback}</span>
+            </div>
+          )}
+
+          {/* Subject-wise Submission Status Pills for this Section */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {sectionSubjectAssignments.map((asg) => {
+              const subStatus = getSubjectSubmissionStatus(asg, activeTerm.id);
+              const enteredCount = subjectMarks.filter(
+                (m) => m.assignmentId === asg.id && m.termId === activeTerm.id
+              ).length;
+              return (
+                <div
+                  key={asg.id}
+                  className={`rounded-xl border p-3 flex items-center justify-between gap-2 text-xs ${
+                    subStatus === 'submitted'
+                      ? 'border-amber-200 dark:border-amber-800/70 bg-amber-50/40 dark:bg-amber-950/20'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-900 dark:text-white truncate">
+                      {asg.subjectName}
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      শিক্ষক: {asg.teacherCode} · এন্ট্রি: {num(enteredCount)}/{num(classStudents.length)}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                        subStatus === 'submitted'
+                          ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300'
+                          : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                      }`}
+                    >
+                      {subStatus === 'submitted' ? (
+                        <>
+                          <Lock className="w-2.5 h-2.5" />
+                          <span>জমাদানকৃত</span>
+                        </>
+                      ) : (
+                        <span>খসড়া</span>
+                      )}
+                    </span>
+
+                    {subStatus === 'submitted' && isReviewer && (
+                      <button
+                        type="button"
+                        title="Unlock Subject Marks to Draft"
+                        onClick={async () => {
+                          await unlockSubjectMarksToDraft(asg.id, activeTerm.id);
+                          setWorkflowFeedback(
+                            `🔓 "${asg.subjectName}" বিষয়টি পুনরায় এডিটের জন্য আনলক করা হয়েছে।`
+                          );
+                        }}
+                        className="p-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 cursor-pointer"
+                      >
+                        <Unlock className="w-3 h-3" />
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMarksAssignmentId(asg.id);
+                        setActiveView('exam-marks');
+                      }}
+                      className="px-2 py-0.5 rounded bg-teal-700 text-white text-[10px] font-semibold cursor-pointer"
+                    >
+                      দেখুন
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* VIEW 1: SINGLE-TERM TABULATION SHEET (with frozen/sticky Roll & Name column) */}
       {activeSubTab === 'single-tabulation' && (

@@ -1,4 +1,4 @@
-import { ClassSection, RoutineRecord, UserProfile } from '../types/school';
+import { ClassSection, RoutineRecord, SubjectAssignment, UserProfile } from '../types/school';
 
 export const LIVE_ROUTINE_APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbzGUBlzXFJ_OS8cDTKOvEl4-7B1TMFYvF-n_RySMP61SnUOSTcmnWll5L6-fvNrabdmKw/exec';
@@ -527,9 +527,88 @@ export const ROUTINE_TEACHER_DIRECTORY: Record<string, string> = {
   'N.S.': 'N.S. (Assistant Teacher)',
 };
 
-export function normalizeTeacherCodeKey(code: string | undefined | null): string {
+export function normalizeAbbr(code: string | undefined | null): string {
   if (!code) return '';
-  return code.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  return code
+    .replace(/[.\s\-_]/g, '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase();
+}
+
+export function normalizeTeacherCodeKey(code: string | undefined | null): string {
+  return normalizeAbbr(code);
+}
+
+/**
+ * Extracts sorted unique teacher abbreviations from live routine records.
+ */
+export function extractRoutineAbbreviations(routineRecords: RoutineRecord[]): string[] {
+  const seen = new Map<string, string>();
+  for (const r of routineRecords) {
+    const raw = (r.teacher || '').trim();
+    const key = normalizeAbbr(raw);
+    if (key && !seen.has(key)) {
+      seen.set(key, raw);
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Finds a UserProfile matching a routine teacher code using dot-insensitive normalizeAbbr.
+ */
+export function findTeacherByRoutineCode(
+  teachers: UserProfile[],
+  rawRoutineCode: string
+): UserProfile | undefined {
+  const targetKey = normalizeAbbr(rawRoutineCode);
+  if (!targetKey) return undefined;
+
+  // 1. Exact match on routineAbbreviation
+  const byRoutineAbbr = teachers.find(
+    (t) => t.routineAbbreviation && normalizeAbbr(t.routineAbbreviation) === targetKey
+  );
+  if (byRoutineAbbr) return byRoutineAbbr;
+
+  // 2. Exact match on teacherCode
+  const byTeacherCode = teachers.find(
+    (t) => normalizeAbbr(t.teacherCode) === targetKey
+  );
+  if (byTeacherCode) return byTeacherCode;
+
+  // 3. Fallback aliases (e.g. A.H.M. <-> R.D., Z.H.C <-> J.H., N.Y. <-> N.I., MOR. <-> G.M.)
+  const fallbackAliases: Record<string, string[]> = {
+    AHM: ['RD'],
+    RD: ['AHM'],
+    ADN: ['AD'],
+    AD: ['ADN'],
+    ZHC: ['JH', 'ZHC'],
+    JH: ['ZHC'],
+    NY: ['NI', 'NY'],
+    NI: ['NY'],
+    MOR: ['GM', 'MOR'],
+    GM: ['MOR'],
+    MU: ['SI', 'MSI'],
+    SR: ['SB'],
+    JUC: ['NZ'],
+    MDR: ['MC'],
+    RH: ['FA'],
+    SI: ['MSI'],
+    FA: ['FY'],
+    NZ: ['NA'],
+    FH: ['PKN'],
+  };
+  const altKeys = fallbackAliases[targetKey] || [];
+  for (const alt of altKeys) {
+    const found = teachers.find(
+      (t) =>
+        normalizeAbbr(t.routineAbbreviation) === alt ||
+        normalizeAbbr(t.teacherCode) === alt
+    );
+    if (found) return found;
+  }
+
+  return undefined;
 }
 
 /**
@@ -541,35 +620,39 @@ export function resolveRoutineTeacherCodeForUser(
 ): string {
   if (!user || availableRoutineTeachers.length === 0) return availableRoutineTeachers[0] || 'A.D.N.';
 
-  const userKey = normalizeTeacherCodeKey(user.teacherCode);
-  // 1. Direct normalized match (e.g. "ADN" === "A.D.N.", "SI" === "S.I.")
-  const exactMatch = availableRoutineTeachers.find(
-    (t) => normalizeTeacherCodeKey(t) === userKey
-  );
-  if (exactMatch) return exactMatch;
+  const primaryKey = normalizeAbbr(user.routineAbbreviation || user.teacherCode);
+  const secondaryKey = normalizeAbbr(user.teacherCode);
 
-  // 2. Portal seed faculty aliases
+  for (const key of [primaryKey, secondaryKey]) {
+    if (!key) continue;
+    const exactMatch = availableRoutineTeachers.find(
+      (t) => normalizeAbbr(t) === key
+    );
+    if (exactMatch) return exactMatch;
+  }
+
   const aliasMap: Record<string, string[]> = {
     AD: ['A.D.N.'],
     ADN: ['A.D.N.'],
+    RD: ['A.H.M.', 'R.D.'],
+    AHM: ['A.H.M.', 'R.D.'],
     MSI: ['S.I.', 'M.A.'],
     NA: ['N.Z.', 'N.Y.'],
     FY: ['F.A.'],
     PKN: ['F.H.', 'S.H.'],
     KH: ['S.H.', 'J.U.C.'],
   };
-  const candidates = aliasMap[userKey] || [];
+  const candidates = aliasMap[primaryKey] || aliasMap[secondaryKey] || [];
   for (const cand of candidates) {
     const found = availableRoutineTeachers.find(
-      (t) => normalizeTeacherCodeKey(t) === normalizeTeacherCodeKey(cand)
+      (t) => normalizeAbbr(t) === normalizeAbbr(cand)
     );
     if (found) return found;
   }
 
-  // 3. Prefix / substring match on initials
   const partialMatch = availableRoutineTeachers.find((t) => {
-    const tk = normalizeTeacherCodeKey(t);
-    return tk.startsWith(userKey) || userKey.startsWith(tk);
+    const tk = normalizeAbbr(t);
+    return tk.startsWith(primaryKey) || primaryKey.startsWith(tk);
   });
   if (partialMatch) return partialMatch;
 
@@ -592,7 +675,12 @@ export function mapClassSectionToRoutineClassCode(
   };
   const roman = romanMap[cs.className] || 'IX';
   const secUpper = cs.section.toUpperCase();
-  if (secUpper.includes('KHA') || secUpper.includes('খ') || secUpper.includes('SECTION B') || secUpper === 'B') {
+  if (
+    secUpper.includes('KHA') ||
+    secUpper.includes('খ') ||
+    secUpper.includes('SECTION B') ||
+    secUpper === 'B'
+  ) {
     return `${roman}-B`;
   }
   return `${roman}-A`;
@@ -610,6 +698,364 @@ export const ALL_ROUTINE_CLASS_CODES = [
   'X-A',
   'X-B',
 ];
+
+/**
+ * Maps a routine subject string (e.g. "Ben-1 & 2", "Eng-1", "Math", "Physics")
+ * into canonical NCTB subject specifications.
+ */
+export function mapRoutineSubjectToCatalogSubjects(
+  rawSubject: string
+): Array<{ subjectCode: string; subjectName: string; maxMarks: number }> {
+  const clean = (rawSubject || '').trim();
+  const upper = clean.toUpperCase();
+
+  if (upper === 'BEN-1 & 2' || upper === 'BAN-1 & 2' || upper === 'BEN 1 & 2') {
+    return [
+      { subjectCode: '101', subjectName: 'Bangla 1st Paper', maxMarks: 100 },
+      { subjectCode: '102', subjectName: 'Bangla 2nd Paper', maxMarks: 100 },
+    ];
+  }
+  if (upper === 'BEN-1' || upper === 'BAN-1') {
+    return [{ subjectCode: '101', subjectName: 'Bangla 1st Paper', maxMarks: 100 }];
+  }
+  if (upper === 'BEN-2' || upper === 'BAN-2') {
+    return [{ subjectCode: '102', subjectName: 'Bangla 2nd Paper', maxMarks: 100 }];
+  }
+  if (upper === 'ENG-1 & 2' || upper === 'ENG 1 & 2') {
+    return [
+      { subjectCode: '107', subjectName: 'English 1st Paper', maxMarks: 100 },
+      { subjectCode: '108', subjectName: 'English 2nd Paper', maxMarks: 100 },
+    ];
+  }
+  if (upper === 'ENG-1') {
+    return [{ subjectCode: '107', subjectName: 'English 1st Paper', maxMarks: 100 }];
+  }
+  if (upper === 'ENG-2') {
+    return [{ subjectCode: '108', subjectName: 'English 2nd Paper', maxMarks: 100 }];
+  }
+  if (upper === 'MATH' || upper === 'MATHEMATICS') {
+    return [{ subjectCode: '109', subjectName: 'Mathematics', maxMarks: 100 }];
+  }
+  if (upper === 'SCIENCE' || upper === 'SCI' || upper === 'G.SCI') {
+    return [{ subjectCode: '127', subjectName: 'General Science', maxMarks: 100 }];
+  }
+  if (upper === 'BGS' || upper === 'B.G.S.') {
+    return [{ subjectCode: '150', subjectName: 'Bangladesh & Global Studies', maxMarks: 100 }];
+  }
+  if (upper === 'RELIGION' || upper === 'REL') {
+    return [{ subjectCode: '111', subjectName: 'Religion & Moral Education', maxMarks: 100 }];
+  }
+  if (upper === 'ICT' || upper === 'I.C.T.') {
+    return [{ subjectCode: '154', subjectName: 'Information & Communication Technology', maxMarks: 50 }];
+  }
+  if (upper.startsWith('AGRI')) {
+    return [{ subjectCode: '134', subjectName: 'Agriculture Studies', maxMarks: 100 }];
+  }
+  if (upper === 'PHYSICS' || upper === 'PHY') {
+    return [{ subjectCode: '136', subjectName: 'Physics', maxMarks: 100 }];
+  }
+  if (upper === 'CHEMISTRY' || upper === 'CHEM') {
+    return [{ subjectCode: '137', subjectName: 'Chemistry', maxMarks: 100 }];
+  }
+  if (upper === 'BIOLOGY' || upper === 'BIO') {
+    return [{ subjectCode: '138', subjectName: 'Biology', maxMarks: 100 }];
+  }
+  if (upper === 'H-MATH' || upper === 'H.MATH' || upper === 'HMATH') {
+    return [{ subjectCode: '126', subjectName: 'Higher Mathematics', maxMarks: 100 }];
+  }
+  if (upper === 'ACCOUNTING' || upper === 'ACC') {
+    return [{ subjectCode: '146', subjectName: 'Accounting', maxMarks: 100 }];
+  }
+  if (upper === 'F&B' || upper === 'FINANCE') {
+    return [{ subjectCode: '152', subjectName: 'Finance & Banking', maxMarks: 100 }];
+  }
+  if (upper.startsWith('B.ENT') || upper === 'BUS.ENT') {
+    return [{ subjectCode: '143', subjectName: 'Business Entrepreneurship', maxMarks: 100 }];
+  }
+  if (upper === 'HISTORY' || upper === 'HIST') {
+    return [
+      {
+        subjectCode: '153',
+        subjectName: 'History of Bangladesh & World Civilization',
+        maxMarks: 100,
+      },
+    ];
+  }
+  if (upper === 'CIVICS' || upper === 'CIV') {
+    return [{ subjectCode: '140', subjectName: 'Civics & Citizenship', maxMarks: 100 }];
+  }
+  if (upper.startsWith('GEO')) {
+    return [{ subjectCode: '110', subjectName: 'Geography & Environment', maxMarks: 100 }];
+  }
+  if (upper === 'P.ED' || upper === 'PED') {
+    return [{ subjectCode: '147', subjectName: 'Physical Education & Health', maxMarks: 50 }];
+  }
+  if (upper === 'C.ED' || upper === 'CED') {
+    return [{ subjectCode: '156', subjectName: 'Career Education', maxMarks: 50 }];
+  }
+  if (upper === 'A&C') {
+    return [{ subjectCode: '148', subjectName: 'Arts & Crafts', maxMarks: 50 }];
+  }
+  return [];
+}
+
+/**
+ * Auto-Derives the 10 Class Teachers (Rule A: 1st Period Teacher = Class Teacher)
+ * and Subject Teacher Assignments (Rule B: Majority-Day Subject Teacher Assignment)
+ * from the live Routine Records while respecting Admin Manual Overrides (Rule C).
+ */
+export function deriveClassTeachersAndSubjectAssignmentsFromRoutine(params: {
+  routineRecords: RoutineRecord[];
+  classSections: ClassSection[];
+  teachers: UserProfile[];
+  existingAssignments: SubjectAssignment[];
+  academicYearId: string;
+}): {
+  updatedClassSections: ClassSection[];
+  updatedSubjectAssignments: SubjectAssignment[];
+} {
+  const {
+    routineRecords,
+    classSections,
+    teachers,
+    existingAssignments,
+    academicYearId,
+  } = params;
+
+  const activeTeachers = teachers.filter((t) => t.staffType !== 'staff');
+
+  // Rule A: 1st Period Teacher = Class Teacher for each of the 10 class-sections
+  const updatedClassSections: ClassSection[] = classSections.map((cs) => {
+    if (cs.academicYearId !== academicYearId || cs.isManualOverride) {
+      return cs;
+    }
+
+    const routineCode = mapClassSectionToRoutineClassCode(cs);
+    // Find period 1 entries for this section (prefer exact section match like "VI-A" over umbrella "VI")
+    const period1Candidates = routineRecords.filter(
+      (r) => r.period === 1 && isClassMatch(routineCode, r.className)
+    );
+    if (period1Candidates.length === 0) {
+      return cs;
+    }
+
+    // Score each candidate teacher by total days in period 1 (preferring exact section match)
+    const candidateScores = new Map<
+      string,
+      { rawTeacher: string; daysCount: number; exactSection: boolean }
+    >();
+
+    for (const entry of period1Candidates) {
+      const key = normalizeAbbr(entry.teacher);
+      if (!key) continue;
+      const daysCount = parseDaysExpression(entry.days).length;
+      const isExact = entry.className.trim().toUpperCase() === routineCode;
+      const prev = candidateScores.get(key);
+      if (!prev) {
+        candidateScores.set(key, {
+          rawTeacher: entry.teacher,
+          daysCount,
+          exactSection: isExact,
+        });
+      } else {
+        prev.daysCount += daysCount;
+        prev.exactSection = prev.exactSection || isExact;
+      }
+    }
+
+    const sortedCandidates = Array.from(candidateScores.values()).sort((a, b) => {
+      if (a.exactSection !== b.exactSection) return a.exactSection ? -1 : 1;
+      return b.daysCount - a.daysCount;
+    });
+
+    const winner = sortedCandidates[0];
+    if (!winner) return cs;
+
+    const matchedProfile = findTeacherByRoutineCode(activeTeachers, winner.rawTeacher);
+    if (matchedProfile) {
+      return {
+        ...cs,
+        classTeacherUid: matchedProfile.uid,
+        classTeacherName: matchedProfile.name,
+        classTeacherCode: matchedProfile.teacherCode,
+      };
+    }
+
+    return {
+      ...cs,
+      classTeacherCode: normalizeAbbr(winner.rawTeacher) || winner.rawTeacher,
+    };
+  });
+
+  // Rule B: Majority-Day Subject Teacher Assignment per class-section & subject
+  const derivedAssignmentsBySectionAndSubject = new Map<string, SubjectAssignment>();
+
+  // Preserve assignments from other academic years
+  const otherYearAssignments = existingAssignments.filter(
+    (a) => a.academicYearId !== academicYearId
+  );
+
+  // Index current year existing assignments by `${classSectionId}_${subjectCode}` and by `id`
+  const currentYearExisting = existingAssignments.filter(
+    (a) => a.academicYearId === academicYearId
+  );
+
+  for (const cs of updatedClassSections) {
+    if (cs.academicYearId !== academicYearId) continue;
+    const routineCode = mapClassSectionToRoutineClassCode(cs);
+
+    // Collect all routine entries matching this classSection
+    const sectionRoutineEntries = routineRecords.filter((r) =>
+      isClassMatch(routineCode, r.className)
+    );
+
+    // Group by catalog subjectCode -> teacherKey -> { rawTeacher, totalDays, minPeriod, exactMatchCount }
+    const subjectTeacherMap = new Map<
+      string,
+      {
+        subjectCode: string;
+        subjectName: string;
+        maxMarks: number;
+        teachers: Map<
+          string,
+          {
+            rawTeacher: string;
+            totalDays: number;
+            minPeriod: number;
+            exactMatchCount: number;
+          }
+        >;
+      }
+    >();
+
+    for (const entry of sectionRoutineEntries) {
+      const catalogSubjects = mapRoutineSubjectToCatalogSubjects(entry.subject);
+      if (catalogSubjects.length === 0) continue;
+
+      const tKey = normalizeAbbr(entry.teacher);
+      if (!tKey) continue;
+
+      const entryDaysCount = parseDaysExpression(entry.days).length;
+      const isExactSection = entry.className.trim().toUpperCase() === routineCode;
+
+      for (const catSubj of catalogSubjects) {
+        let subjBucket = subjectTeacherMap.get(catSubj.subjectCode);
+        if (!subjBucket) {
+          subjBucket = {
+            subjectCode: catSubj.subjectCode,
+            subjectName: catSubj.subjectName,
+            maxMarks: catSubj.maxMarks,
+            teachers: new Map(),
+          };
+          subjectTeacherMap.set(catSubj.subjectCode, subjBucket);
+        }
+
+        const existingT = subjBucket.teachers.get(tKey);
+        if (!existingT) {
+          subjBucket.teachers.set(tKey, {
+            rawTeacher: entry.teacher,
+            totalDays: entryDaysCount,
+            minPeriod: entry.period,
+            exactMatchCount: isExactSection ? entryDaysCount : 0,
+          });
+        } else {
+          existingT.totalDays += entryDaysCount;
+          existingT.minPeriod = Math.min(existingT.minPeriod, entry.period);
+          if (isExactSection) {
+            existingT.exactMatchCount += entryDaysCount;
+          }
+        }
+      }
+    }
+
+    // For each subject in this section, determine the winning teacher by majority days
+    for (const [subjectCode, bucket] of subjectTeacherMap.entries()) {
+      const compositeKey = `${cs.id}_${subjectCode}`;
+      const existingAsg = currentYearExisting.find(
+        (a) => a.classSectionId === cs.id && a.subjectCode === subjectCode
+      );
+
+      // Rule C: Respect manual override
+      if (existingAsg?.isManualOverride) {
+        derivedAssignmentsBySectionAndSubject.set(compositeKey, existingAsg);
+        continue;
+      }
+
+      const candidates = Array.from(bucket.teachers.values());
+      // If any candidate has exact section matches (e.g., IX-A instead of umbrella IX),
+      // prefer candidates with exactMatchCount > 0, then sort by totalDays descending, then minPeriod ascending
+      const hasExactSectionCandidates = candidates.some((c) => c.exactMatchCount > 0);
+      const pool = hasExactSectionCandidates
+        ? candidates.filter((c) => c.exactMatchCount > 0)
+        : candidates;
+
+      pool.sort((a, b) => {
+        const aDays = hasExactSectionCandidates ? a.exactMatchCount : a.totalDays;
+        const bDays = hasExactSectionCandidates ? b.exactMatchCount : b.totalDays;
+        if (bDays !== aDays) return bDays - aDays;
+        if (b.totalDays !== a.totalDays) return b.totalDays - a.totalDays;
+        return a.minPeriod - b.minPeriod;
+      });
+
+      const winningCandidate = pool[0];
+      if (!winningCandidate) continue;
+
+      const matchedTeacher = findTeacherByRoutineCode(
+        activeTeachers,
+        winningCandidate.rawTeacher
+      );
+
+      const resolvedTeacherUid =
+        matchedTeacher?.uid || existingAsg?.teacherUid || `usr_rt_${normalizeAbbr(winningCandidate.rawTeacher).toLowerCase()}`;
+      const resolvedTeacherName =
+        matchedTeacher?.name ||
+        ROUTINE_TEACHER_DIRECTORY[winningCandidate.rawTeacher] ||
+        winningCandidate.rawTeacher;
+      const resolvedTeacherCode =
+        matchedTeacher?.teacherCode || normalizeAbbr(winningCandidate.rawTeacher) || 'TCH';
+
+      const asgId =
+        existingAsg?.id ||
+        `asg_${cs.id}_${subjectCode}`;
+
+      derivedAssignmentsBySectionAndSubject.set(compositeKey, {
+        id: asgId,
+        academicYearId,
+        classSectionId: cs.id,
+        className: cs.className,
+        section: cs.section,
+        subjectCode: bucket.subjectCode,
+        subjectName: bucket.subjectName,
+        teacherUid: resolvedTeacherUid,
+        teacherName: resolvedTeacherName,
+        teacherCode: resolvedTeacherCode,
+        maxMarks: existingAsg?.maxMarks || bucket.maxMarks,
+        isManualOverride: false,
+        assignedDaysCount: winningCandidate.totalDays,
+        statusByTerm: existingAsg?.statusByTerm,
+        submittedAtByTerm: existingAsg?.submittedAtByTerm,
+        submittedByUidByTerm: existingAsg?.submittedByUidByTerm,
+        createdAt: existingAsg?.createdAt || '2026-01-08T00:00:00.000Z',
+      });
+    }
+  }
+
+  // Also keep any existing assignments for the current year that were manually added or had marks entered
+  for (const existingAsg of currentYearExisting) {
+    const compositeKey = `${existingAsg.classSectionId}_${existingAsg.subjectCode}`;
+    if (!derivedAssignmentsBySectionAndSubject.has(compositeKey)) {
+      derivedAssignmentsBySectionAndSubject.set(compositeKey, existingAsg);
+    }
+  }
+
+  return {
+    updatedClassSections,
+    updatedSubjectAssignments: [
+      ...otherYearAssignments,
+      ...Array.from(derivedAssignmentsBySectionAndSubject.values()),
+    ],
+  };
+}
 
 /**
  * Returns the routine weekday number (2=Sun..6=Thu) for a given JS Date or defaults to 4 (Tuesday) on weekends.
@@ -658,21 +1104,16 @@ export function parseLiveMasterGridToRoutineRecords(payload: {
       const rawCell = String(row[colIdx] || '').trim();
       if (!rawCell || rawCell === '-') continue;
 
-      // A cell can contain multiple segments separated by ",\n" or " / "
-      // e.g. "H-Math X (2-3),\nH-Math IX (6)" or "P.Ed X-A (2) / X-B (4)"
       const lines = rawCell
         .split(/,\s*\n|\n/)
         .map((s) => s.trim())
         .filter(Boolean);
 
       for (const line of lines) {
-        // Check if line has " / " sharing a subject prefix, e.g. "P.Ed X-A (2) / X-B (4)"
         const slashParts = line.split(/\s+\/\s+/);
         let sharedSubject = '';
 
         for (const part of slashParts) {
-          // Match pattern: [Subject] [RomanClass(-Section)?] [(days)]?
-          // e.g. "Ben-1 & 2  VII-A", "Eng-2 X-B (3-6)", "X-A (6)"
           const match = part
             .trim()
             .match(/^(?:(.+?)\s+)?((?:VI|VII|VIII|IX|X)(?:-[A-Z])?)(?:\s*(\([^)]+\)))?$/i);
@@ -700,3 +1141,4 @@ export function parseLiveMasterGridToRoutineRecords(payload: {
 
   return records;
 }
+

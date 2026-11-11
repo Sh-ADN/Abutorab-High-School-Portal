@@ -5,10 +5,9 @@ import {
   Calendar,
   CheckSquare,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   Download,
+  Eye,
   Globe,
   LayoutDashboard,
   LogOut,
@@ -22,6 +21,14 @@ import {
 } from 'lucide-react';
 import { useSchool, WorkspaceView } from '../context/SchoolContext';
 import { SCHOOL_BRAND_INFO } from '../data/schoolWebsiteData';
+import {
+  isAssignedClassTeacherForSection,
+  isFullAdminUser,
+  isHeadOrAsstHeadUser,
+  isMainAdminUser,
+  isSuperAdminUser,
+  normalizeAbbr,
+} from '../utils/schoolLogic';
 import { usePWAInstall } from '../utils/usePWAInstall';
 
 export const VIEW_METADATA: Record<
@@ -65,10 +72,10 @@ export const VIEW_METADATA: Record<
     subtitleEn: 'Faculty, matrix, marks submission status & notices',
   },
   'admin-teachers': {
-    titleBn: 'শিক্ষক ও রোল',
-    titleEn: 'Teachers & Roles',
-    subtitleBn: 'শিক্ষক প্রোফাইল, কোড ও অ্যাডমিন রোল ব্যবস্থাপনা',
-    subtitleEn: 'Teacher profiles, initials & admin permissions',
+    titleBn: 'শিক্ষক ও স্টাফ ডিরেক্টরি',
+    titleEn: 'Teachers & Staff',
+    subtitleBn: 'শিক্ষক ও স্টাফ প্রোফাইল, কোড ও অ্যাডমিন রোল ব্যবস্থাপনা',
+    subtitleEn: 'Teacher & staff profiles, routine codes & role hierarchy',
   },
   'admin-academic': {
     titleBn: 'শিক্ষাবর্ষ ও শ্রেণি',
@@ -92,7 +99,13 @@ export const VIEW_METADATA: Record<
 
 export function useResolvedRoleBadge(): {
   labelBn: string;
-  labelEn: 'Super Admin' | 'Class Teacher' | 'Subject Teacher';
+  labelEn:
+    | 'Super Admin'
+    | 'Main Admin'
+    | 'Head Teacher'
+    | 'Asst. Head Teacher'
+    | 'Class Teacher'
+    | 'Subject Teacher';
   badgeTone: string;
 } {
   const { currentUser, classSections, selectedAcademicYearId } = useSchool();
@@ -105,7 +118,7 @@ export function useResolvedRoleBadge(): {
     };
   }
 
-  if (currentUser.role === 'admin') {
+  if (isSuperAdminUser(currentUser)) {
     return {
       labelBn: 'সুপার অ্যাডমিন',
       labelEn: 'Super Admin',
@@ -114,12 +127,40 @@ export function useResolvedRoleBadge(): {
     };
   }
 
+  if (isMainAdminUser(currentUser) || currentUser.role === 'admin') {
+    return {
+      labelBn: 'মেইন অ্যাডমিন',
+      labelEn: 'Main Admin',
+      badgeTone:
+        'bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950/70 dark:text-indigo-300 dark:border-indigo-800',
+    };
+  }
+
+  if (currentUser.role === 'head_teacher' || normalizeAbbr(currentUser.teacherCode) === 'HM') {
+    return {
+      labelBn: 'প্রধান শিক্ষক',
+      labelEn: 'Head Teacher',
+      badgeTone:
+        'bg-purple-50 text-purple-800 border-purple-300 dark:bg-purple-950/70 dark:text-purple-300 dark:border-purple-800',
+    };
+  }
+
+  if (isHeadOrAsstHeadUser(currentUser)) {
+    return {
+      labelBn: 'সহকারী প্রধান শিক্ষক',
+      labelEn: 'Asst. Head Teacher',
+      badgeTone:
+        'bg-purple-50 text-purple-800 border-purple-300 dark:bg-purple-950/70 dark:text-purple-300 dark:border-purple-800',
+    };
+  }
+
   const isClassTeacher = classSections.some(
     (cs) =>
-      cs.academicYearId === selectedAcademicYearId && cs.classTeacherUid === currentUser.uid
+      cs.academicYearId === selectedAcademicYearId &&
+      isAssignedClassTeacherForSection(currentUser, cs)
   );
 
-  if (isClassTeacher) {
+  if (isClassTeacher || currentUser.role === 'class_teacher') {
     return {
       labelBn: 'শ্রেণি শিক্ষক',
       labelEn: 'Class Teacher',
@@ -137,6 +178,62 @@ export function useResolvedRoleBadge(): {
 }
 
 /**
+ * Prominent Amber Banner shown when Super Admin or Main Admin is using "View As (হিসেবে পরিদর্শন করুন)"
+ */
+export const ViewAsActiveBanner: React.FC = () => {
+  const {
+    currentUser,
+    realAuthUser,
+    viewAsTeacherUid,
+    setViewAsTeacherUid,
+    classSections,
+    selectedAcademicYearId,
+  } = useSchool();
+
+  if (!viewAsTeacherUid || !currentUser || !realAuthUser) return null;
+
+  const assignedSection = classSections.find(
+    (cs) =>
+      cs.academicYearId === selectedAcademicYearId &&
+      isAssignedClassTeacherForSection(currentUser, cs)
+  );
+  const normAbbr = normalizeAbbr(currentUser.routineAbbreviation || currentUser.teacherCode);
+
+  return (
+    <div
+      data-testid="view-as-active-banner"
+      className="no-print print:hidden w-full bg-amber-500 text-slate-950 px-4 py-2 border-b border-amber-600/40 flex flex-wrap items-center justify-between gap-2 text-xs font-bold z-40 shadow-xs"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-950 text-amber-300 text-[11px] font-mono">
+          <Eye className="w-3.5 h-3.5" />
+          <span>VIEW AS MODE</span>
+        </span>
+        <span>
+          Viewing as: <strong>{currentUser.nameBn || currentUser.name}</strong> ({currentUser.name}){' '}
+          [{normAbbr}]
+        </span>
+        {assignedSection && (
+          <span className="px-2 py-0.5 rounded bg-amber-950/15 text-slate-900 font-semibold">
+            শ্রেণি শিক্ষক: {assignedSection.className} ({assignedSection.section})
+          </span>
+        )}
+      </div>
+
+      <button
+        type="button"
+        data-testid="exit-view-as-button"
+        onClick={() => setViewAsTeacherUid(null)}
+        className="px-3 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+      >
+        <X className="w-3.5 h-3.5 text-amber-400" />
+        <span>Exit View As ({realAuthUser.teacherCode}-এ ফিরুন)</span>
+      </button>
+    </div>
+  );
+};
+
+/**
  * Desktop Clean Fixed Left Sidebar (w-60 bg-slate-900 text-slate-100)
  */
 export const PortalSidebar: React.FC<{
@@ -145,6 +242,10 @@ export const PortalSidebar: React.FC<{
 }> = () => {
   const {
     currentUser,
+    realAuthUser,
+    viewAsTeacherUid,
+    setViewAsTeacherUid,
+    users,
     activeView,
     setActiveView,
     setShowPublicWebsite,
@@ -159,10 +260,12 @@ export const PortalSidebar: React.FC<{
 
   if (!currentUser) return null;
 
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isFullAdminUser(currentUser);
+  const canUseViewAs = isFullAdminUser(realAuthUser);
   const assignedClassSection = classSections.find(
     (cs) =>
-      cs.academicYearId === selectedAcademicYearId && cs.classTeacherUid === currentUser.uid
+      cs.academicYearId === selectedAcademicYearId &&
+      isAssignedClassTeacherForSection(currentUser, cs)
   );
 
   const isAdminViewActive =
@@ -194,7 +297,7 @@ export const PortalSidebar: React.FC<{
       isActive: activeView === 'student-attendance',
       onClick: () => setActiveView('student-attendance'),
       badge: assignedClassSection
-        ? `${assignedClassSection.className}-${assignedClassSection.section}`
+        ? `${assignedClassSection.className.replace('Class ', 'C')}-${assignedClassSection.section.replace('Section ', '').split(' ')[0]}`
         : undefined,
     },
     {
@@ -316,6 +419,56 @@ export const PortalSidebar: React.FC<{
             )}
           </button>
         ))}
+
+        {/* Sidebar View As Inspector for Super Admin & Main Admin */}
+        {canUseViewAs && (
+          <div className="pt-3 mt-3 border-t border-slate-800/80 px-1 space-y-1.5">
+            <label
+              htmlFor="sidebar-view-as-select"
+              className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-400"
+            >
+              <Eye className="w-3 h-3" />
+              <span>হিসেবে পরিদর্শন (View As)</span>
+            </label>
+            <select
+              id="sidebar-view-as-select"
+              value={viewAsTeacherUid || ''}
+              onChange={(e) => {
+                const val = e.target.value || null;
+                setViewAsTeacherUid(val);
+                if (val && activeView.startsWith('admin-')) {
+                  setActiveView('teacher-dashboard');
+                }
+              }}
+              className="w-full text-[11px] font-medium rounded-lg border border-slate-700 bg-slate-950 text-slate-100 px-2 py-1.5 focus:border-amber-400 focus:outline-none"
+            >
+              <option value="">
+                নিজ প্রোফাইল ({realAuthUser?.teacherCode} —{' '}
+                {isSuperAdminUser(realAuthUser) ? 'Super Admin' : 'Main Admin'})
+              </option>
+              {users
+                .filter((u) => u.status === 'active')
+                .map((u) => {
+                  const cs = classSections.find(
+                    (c) =>
+                      c.academicYearId === selectedAcademicYearId &&
+                      isAssignedClassTeacherForSection(u, c)
+                  );
+                  const abbr = normalizeAbbr(u.routineAbbreviation || u.teacherCode);
+                  return (
+                    <option key={u.uid} value={u.uid}>
+                      {u.nameBn || u.name} [{abbr}]
+                      {cs
+                        ? ` · CT: ${cs.className} (${cs.section})`
+                        : u.staffType === 'staff'
+                          ? ' · Staff'
+                          : ''}
+                    </option>
+                  );
+                })}
+            </select>
+          </div>
+        )}
       </nav>
 
       {/* Bottom: User Profile Card & Sign Out */}
@@ -330,15 +483,17 @@ export const PortalSidebar: React.FC<{
             />
           ) : (
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-teal-700 to-emerald-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
-              {currentUser.teacherCode}
+              {normalizeAbbr(currentUser.routineAbbreviation || currentUser.teacherCode)}
             </div>
           )}
 
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-bold text-white truncate">{currentUser.name}</div>
+            <div className="text-xs font-bold text-white truncate">
+              {currentUser.nameBn || currentUser.name}
+            </div>
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="text-[10px] font-mono font-semibold text-teal-400">
-                [{currentUser.teacherCode}]
+                [{normalizeAbbr(currentUser.routineAbbreviation || currentUser.teacherCode)}]
               </span>
               <span
                 className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${roleBadge.badgeTone}`}
@@ -368,7 +523,13 @@ export const PortalSidebar: React.FC<{
 export const HeaderBar: React.FC = () => {
   const {
     currentUser,
+    realAuthUser,
+    viewAsTeacherUid,
+    setViewAsTeacherUid,
+    users,
+    classSections,
     activeView,
+    setActiveView,
     setShowPublicWebsite,
     logout,
     theme,
@@ -391,6 +552,7 @@ export const HeaderBar: React.FC = () => {
   const meta = VIEW_METADATA[activeView] || VIEW_METADATA['teacher-dashboard'];
   const activeYear = academicYears.find((y) => y.id === selectedAcademicYearId);
   const activeTerm = examTerms.find((t) => t.id === selectedTermId);
+  const canUseViewAs = isFullAdminUser(realAuthUser);
 
   return (
     <header className="no-print print:hidden sticky top-0 z-30 w-full h-14 backdrop-blur-md bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/90 dark:border-slate-800 flex items-center px-4 sm:px-6">
@@ -419,8 +581,56 @@ export const HeaderBar: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: Controls (BN/EN toggle, Theme toggle, Install, Avatar) */}
+        {/* Right: Controls ("View As" Dropdown for Admins, BN/EN toggle, Theme toggle, Install, Avatar) */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* "View As (হিসেবে পরিদর্শন করুন)" Dropdown for super_admin & main_admin */}
+          {canUseViewAs && (
+            <div className="flex items-center gap-1.5">
+              <Eye className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 hidden sm:inline shrink-0" />
+              <select
+                aria-label="View As (হিসেবে পরিদর্শন করুন)"
+                data-testid="header-view-as-select"
+                value={viewAsTeacherUid || ''}
+                onChange={(e) => {
+                  const val = e.target.value || null;
+                  setViewAsTeacherUid(val);
+                  if (val && activeView.startsWith('admin-')) {
+                    setActiveView('teacher-dashboard');
+                  }
+                }}
+                className={`text-xs font-semibold rounded-lg border px-2 py-1 max-w-[115px] sm:max-w-[230px] truncate transition-colors cursor-pointer ${
+                  viewAsTeacherUid
+                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/70 text-amber-900 dark:text-amber-200'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
+                }`}
+              >
+                <option value="">
+                  হিসেবে পরিদর্শন করুন ({realAuthUser?.teacherCode})
+                </option>
+                {users
+                  .filter((u) => u.status === 'active')
+                  .map((u) => {
+                    const cs = classSections.find(
+                      (c) =>
+                        c.academicYearId === selectedAcademicYearId &&
+                        isAssignedClassTeacherForSection(u, c)
+                    );
+                    const abbr = normalizeAbbr(u.routineAbbreviation || u.teacherCode);
+                    return (
+                      <option key={u.uid} value={u.uid}>
+                        {u.nameBn || u.name} [{abbr}]
+                        {cs
+                          ? ` — শ্রেণি শিক্ষক: ${cs.className} (${cs.section})`
+                          : u.staffType === 'staff'
+                            ? ' — স্টাফ'
+                            : ''}
+                      </option>
+                    );
+                  })}
+              </select>
+            </div>
+          )}
+
           {/* PWA App Install */}
           {!isInstalled && isInstallable && (
             <button
@@ -487,10 +697,12 @@ export const HeaderBar: React.FC = () => {
               />
             ) : (
               <div
-                title={`${currentUser.name} (${currentUser.teacherCode})`}
+                title={`${currentUser.nameBn || currentUser.name} (${normalizeAbbr(
+                  currentUser.routineAbbreviation || currentUser.teacherCode
+                )})`}
                 className="w-7 h-7 rounded-full bg-teal-700 text-white font-bold text-[11px] flex items-center justify-center shadow-2xs"
               >
-                {currentUser.teacherCode}
+                {normalizeAbbr(currentUser.routineAbbreviation || currentUser.teacherCode)}
               </div>
             )}
             <button
@@ -543,7 +755,7 @@ export const MobileBottomNav: React.FC = () => {
 
   if (!currentUser) return null;
 
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isFullAdminUser(currentUser);
   const isMenuTabActive =
     activeView === 'school-routine' ||
     activeView === 'admin-panel' ||
@@ -604,18 +816,17 @@ export const MobileBottomNav: React.FC = () => {
 
   return (
     <>
-      {/* Mobile Drawer Sheet when "মেনু" is tapped */}
       {drawerOpen && (
         <div className="no-print print:hidden lg:hidden fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex flex-col justify-end">
           <div className="bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-teal-700 text-white font-bold text-xs flex items-center justify-center">
-                  {currentUser.teacherCode}
+                  {normalizeAbbr(currentUser.routineAbbreviation || currentUser.teacherCode)}
                 </div>
                 <div>
                   <div className="text-sm font-bold text-slate-900 dark:text-white">
-                    {currentUser.name}
+                    {currentUser.nameBn || currentUser.name}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span
@@ -623,9 +834,11 @@ export const MobileBottomNav: React.FC = () => {
                     >
                       {isEn ? roleBadge.labelEn : roleBadge.labelBn}
                     </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      {currentUser.email}
-                    </span>
+                    {currentUser.email && (
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {currentUser.email}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -735,7 +948,6 @@ export const MobileBottomNav: React.FC = () => {
 
 /**
  * Collapsible Floating Developer Role Switcher
- * Placed neatly in the corner for Super Admin sandbox testing, without cluttering the main header!
  */
 export const DevRoleSwitcherPopover: React.FC = () => {
   const {
@@ -752,7 +964,7 @@ export const DevRoleSwitcherPopover: React.FC = () => {
   if (!isSuperAdminSession || isFirebaseAuthenticated || !currentUser) return null;
 
   return (
-    <div className="no-print print:hidden fixed bottom-20 lg:bottom-4 left-4 z-40">
+    <div className="no-print print:hidden fixed bottom-20 lg:bottom-4 right-4 z-40">
       <div className="relative">
         <button
           type="button"
@@ -760,15 +972,17 @@ export const DevRoleSwitcherPopover: React.FC = () => {
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900 text-teal-400 border border-slate-700 text-xs font-semibold shadow-lg hover:bg-slate-800 transition-colors cursor-pointer"
         >
           <Settings2 className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Preview User:</span>
-          <span className="font-mono text-white font-bold">{currentUser.teacherCode}</span>
+          <span className="hidden sm:inline">Session:</span>
+          <span className="font-mono text-white font-bold">
+            {normalizeAbbr(currentUser.routineAbbreviation || currentUser.teacherCode)}
+          </span>
           {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
         </button>
 
         {open && (
-          <div className="absolute bottom-10 left-0 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-2xl space-y-2">
+          <div className="absolute bottom-10 right-0 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-2xl space-y-2">
             <div className="text-[11px] font-bold text-slate-500 uppercase">
-              Role Switcher (Super Admin)
+              Switch Auth Account (Sandbox)
             </div>
             <select
               value={currentUser.uid}
@@ -778,7 +992,7 @@ export const DevRoleSwitcherPopover: React.FC = () => {
                 enterSandboxAs(nextUid);
                 if (
                   nextUser &&
-                  nextUser.role !== 'admin' &&
+                  !isFullAdminUser(nextUser) &&
                   (activeView === 'admin-panel' || activeView.startsWith('admin-'))
                 ) {
                   setActiveView('teacher-dashboard');
@@ -791,7 +1005,8 @@ export const DevRoleSwitcherPopover: React.FC = () => {
                 .filter((u) => u.status === 'active')
                 .map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {u.name} [{u.teacherCode}] ({u.role.toUpperCase()})
+                    {u.nameBn || u.name} [
+                    {normalizeAbbr(u.routineAbbreviation || u.teacherCode)}] ({u.role.toUpperCase()})
                   </option>
                 ))}
             </select>
