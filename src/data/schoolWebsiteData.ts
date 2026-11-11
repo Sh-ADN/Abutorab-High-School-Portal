@@ -282,7 +282,7 @@ export const PUBLIC_TEACHERS_DIRECTORY: PublicTeacherDirectoryItem[] = [
     isSenior: false,
     phone: '01834794241',
     email: 'ananneyadebnath@gmail.com',
-    teacherCode: 'A.D.',
+    teacherCode: 'ADN',
   },
   {
     id: 'tch-10',

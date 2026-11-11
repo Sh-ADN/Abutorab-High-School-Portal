@@ -42,8 +42,9 @@ const PortalShell: React.FC = () => {
             </h1>
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
               Your teacher account ({currentUser.email}) has been marked inactive by a school
-              administrator. Please contact the Headmaster or System Administrator (
-              <span className="font-mono">ananneyadebnath@gmail.com</span>) to restore access.
+              administrator. Please contact the Headmaster or System Administrators (
+              <span className="font-mono">SH — Shahadat Hossain, ADN — Ananneya Debnath</span>) to
+              restore access.
             </p>
           </div>
         </main>
@@ -54,15 +55,15 @@ const PortalShell: React.FC = () => {
   const isAdmin = currentUser.role === 'admin';
 
   return (
-    <div id="top" className="min-h-screen bg-[#f8fafc] dark:bg-[#0f172a]">
+    <div id="top" className="min-h-screen bg-[#f8fafc] dark:bg-[#0f172a] print:bg-white">
       {/* Desktop Fixed Left Sidebar (lg:flex, w-60) */}
       <PortalSidebar />
 
-      {/* Main Content Area (lg:pl-60 to account for fixed sidebar) */}
-      <div className="lg:pl-60 flex flex-col min-h-screen min-w-0 transition-all">
+      {/* Main Content Area (lg:pl-60 to account for fixed sidebar, reset on print) */}
+      <div className="lg:pl-60 print:pl-0 print:pb-0 print:bg-white flex flex-col min-h-screen min-w-0 transition-all">
         <HeaderBar />
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-24 lg:pb-10">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-24 lg:pb-10 print:p-0 print:pb-0 print:max-w-none print:bg-white">
           {activeView === 'teacher-dashboard' && <TeacherDashboard />}
           {activeView === 'student-attendance' && <StudentAttendanceModule />}
           {activeView === 'exam-marks' && <SubjectMarksModule />}
@@ -84,7 +85,7 @@ const PortalShell: React.FC = () => {
             ))}
         </main>
 
-        <footer className="no-print hidden lg:block w-full border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-3.5 text-xs text-slate-500 dark:text-slate-400">
+        <footer className="no-print print:hidden hidden lg:block w-full border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-3.5 text-xs text-slate-500 dark:text-slate-400">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
             <span>
               আবুতোরাব বহুমুখী উচ্চ বিদ্যালয় (Abutorab High School) · স্থাপিতঃ {num(1914)} ইং · মীরসরাই,

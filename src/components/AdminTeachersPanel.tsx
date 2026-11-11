@@ -368,8 +368,11 @@ export const AdminTeachersPanel: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
               {filteredUsers.map((u) => {
+                const codeUpper = (u.teacherCode || '').trim().toUpperCase();
                 const isPrimarySuperAdmin =
-                  u.email.toLowerCase() === 'ananneyadebnath@gmail.com';
+                  u.email.toLowerCase() === 'ananneyadebnath@gmail.com' ||
+                  codeUpper === 'SH' ||
+                  codeUpper === 'ADN';
                 const draftCode =
                   editingCodeMap[u.uid] !== undefined ? editingCodeMap[u.uid] : u.teacherCode;
                 const draftEmail =

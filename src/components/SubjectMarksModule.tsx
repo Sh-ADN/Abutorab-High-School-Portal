@@ -229,7 +229,7 @@ export const SubjectMarksModule: React.FC = () => {
     }
   };
 
-  // Focus helper for Desktop spreadsheet Arrow Up/Down/Left/Right & Enter navigation
+  // Focus helper for Enter / ArrowDown / ArrowUp / ArrowLeft / ArrowRight navigation using data-row and data-col
   const handleDesktopKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
     rowIdx: number,
@@ -272,9 +272,17 @@ export const SubjectMarksModule: React.FC = () => {
       return;
     }
 
-    const nextEl = document.querySelector<HTMLInputElement>(
-      `[data-desktop-mark-cell="${targetRow}-${targetCol}"]`
-    );
+    const scopeContainer =
+      e.currentTarget.closest('table') ||
+      e.currentTarget.closest('[data-marks-mobile-list]') ||
+      document;
+    const nextEl =
+      scopeContainer.querySelector<HTMLInputElement>(
+        `input[data-row="${targetRow}"][data-col="${targetCol}"]`
+      ) ||
+      document.querySelector<HTMLInputElement>(
+        `[data-desktop-mark-cell="${targetRow}-${targetCol}"]`
+      );
     if (nextEl) {
       nextEl.focus();
       nextEl.select();
@@ -693,7 +701,7 @@ export const SubjectMarksModule: React.FC = () => {
       )}
 
       {/* MOBILE STUDENT MARKS CARD LIST (< 768px, md:hidden) — ZERO HORIZONTAL SCROLL */}
-      <div className="md:hidden space-y-3">
+      <div data-marks-mobile-list className="md:hidden space-y-3">
         {filteredStudents.length === 0 ? (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center text-xs text-slate-500">
             কোনো শিক্ষার্থী পাওয়া যায়নি।
@@ -709,6 +717,10 @@ export const SubjectMarksModule: React.FC = () => {
             const mcqOut = Boolean(evalRow?.mcqOut);
             const pracOut = Boolean(evalRow?.pracOut);
             const hasOutOfRange = Boolean(evalRow?.hasOutOfRange);
+
+            const wrColIdx = enabledComponentOrder.indexOf('written');
+            const mcqColIdx = enabledComponentOrder.indexOf('mcq');
+            const pracColIdx = enabledComponentOrder.indexOf('practical');
 
             return (
               <div
@@ -765,6 +777,8 @@ export const SubjectMarksModule: React.FC = () => {
                         type="number"
                         inputMode="decimal"
                         enterKeyHint="next"
+                        data-row={stuIdx}
+                        data-col={wrColIdx}
                         data-mobile-mark-input={`${stuIdx}-0`}
                         disabled={!canEditMarks}
                         min={0}
@@ -772,12 +786,7 @@ export const SubjectMarksModule: React.FC = () => {
                         placeholder={`0-${subjectSpec.writtenMax}`}
                         value={draft.written ?? ''}
                         onChange={(e) => handleComponentChange(stu.id, 'written', e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            focusNextMobileStudentFirstInput(stuIdx);
-                          }
-                        }}
+                        onKeyDown={(e) => handleDesktopKeyDown(e, stuIdx, wrColIdx)}
                         className={`w-full text-center font-mono font-bold text-base rounded-xl border px-2 py-2.5 tabular-nums transition-colors ${
                           wrOut
                             ? 'border-red-500 bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 ring-2 ring-red-400/50'
@@ -800,6 +809,8 @@ export const SubjectMarksModule: React.FC = () => {
                         type="number"
                         inputMode="decimal"
                         enterKeyHint="next"
+                        data-row={stuIdx}
+                        data-col={mcqColIdx}
                         data-mobile-mark-input={
                           subjectSpec.writtenMax === null ? `${stuIdx}-0` : `${stuIdx}-1`
                         }
@@ -809,12 +820,7 @@ export const SubjectMarksModule: React.FC = () => {
                         placeholder={`0-${subjectSpec.mcqMax}`}
                         value={draft.mcq ?? ''}
                         onChange={(e) => handleComponentChange(stu.id, 'mcq', e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            focusNextMobileStudentFirstInput(stuIdx);
-                          }
-                        }}
+                        onKeyDown={(e) => handleDesktopKeyDown(e, stuIdx, mcqColIdx)}
                         className={`w-full text-center font-mono font-bold text-base rounded-xl border px-2 py-2.5 tabular-nums transition-colors ${
                           mcqOut
                             ? 'border-red-500 bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 ring-2 ring-red-400/50'
@@ -837,6 +843,8 @@ export const SubjectMarksModule: React.FC = () => {
                         type="number"
                         inputMode="decimal"
                         enterKeyHint="next"
+                        data-row={stuIdx}
+                        data-col={pracColIdx}
                         data-mobile-mark-input={`${stuIdx}-2`}
                         disabled={!canEditMarks}
                         min={0}
@@ -846,12 +854,7 @@ export const SubjectMarksModule: React.FC = () => {
                         onChange={(e) =>
                           handleComponentChange(stu.id, 'practical', e.target.value)
                         }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            focusNextMobileStudentFirstInput(stuIdx);
-                          }
-                        }}
+                        onKeyDown={(e) => handleDesktopKeyDown(e, stuIdx, pracColIdx)}
                         className={`w-full text-center font-mono font-bold text-base rounded-xl border px-2 py-2.5 tabular-nums transition-colors ${
                           pracOut
                             ? 'border-red-500 bg-red-50 dark:bg-red-950/80 text-red-700 dark:text-red-300 ring-2 ring-red-400/50'
@@ -980,6 +983,8 @@ export const SubjectMarksModule: React.FC = () => {
                           <input
                             type="number"
                             inputMode="decimal"
+                            data-row={rowIdx}
+                            data-col={wrColIdx}
                             data-desktop-mark-cell={`${rowIdx}-${wrColIdx}`}
                             disabled={!canEditMarks}
                             min={0}
@@ -1006,6 +1011,8 @@ export const SubjectMarksModule: React.FC = () => {
                           <input
                             type="number"
                             inputMode="decimal"
+                            data-row={rowIdx}
+                            data-col={mcqColIdx}
                             data-desktop-mark-cell={`${rowIdx}-${mcqColIdx}`}
                             disabled={!canEditMarks}
                             min={0}
@@ -1030,6 +1037,8 @@ export const SubjectMarksModule: React.FC = () => {
                           <input
                             type="number"
                             inputMode="decimal"
+                            data-row={rowIdx}
+                            data-col={pracColIdx}
                             data-desktop-mark-cell={`${rowIdx}-${pracColIdx}`}
                             disabled={!canEditMarks}
                             min={0}

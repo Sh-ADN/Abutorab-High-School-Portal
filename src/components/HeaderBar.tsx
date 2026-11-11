@@ -251,7 +251,7 @@ export const PortalSidebar: React.FC<{
     <aside
       data-testid="portal-desktop-sidebar"
       aria-label="Desktop Portal Sidebar"
-      className="no-print hidden lg:flex flex-col fixed top-0 bottom-0 left-0 w-60 bg-slate-900 text-slate-100 border-r border-slate-800 z-40 select-none"
+      className="no-print print:hidden hidden lg:flex flex-col fixed top-0 bottom-0 left-0 w-60 bg-slate-900 text-slate-100 border-r border-slate-800 z-40 select-none"
     >
       {/* Top: School Brand Crest & EIIN */}
       <div className="p-4 border-b border-slate-800/80">
@@ -393,7 +393,7 @@ export const HeaderBar: React.FC = () => {
   const activeTerm = examTerms.find((t) => t.id === selectedTermId);
 
   return (
-    <header className="no-print sticky top-0 z-30 w-full h-14 backdrop-blur-md bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/90 dark:border-slate-800 flex items-center px-4 sm:px-6">
+    <header className="no-print print:hidden sticky top-0 z-30 w-full h-14 backdrop-blur-md bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/90 dark:border-slate-800 flex items-center px-4 sm:px-6">
       <div className="w-full flex items-center justify-between gap-3">
         {/* Left: Mobile School Crest + Active Screen Title */}
         <div className="flex items-center gap-2.5 min-w-0">
@@ -606,7 +606,7 @@ export const MobileBottomNav: React.FC = () => {
     <>
       {/* Mobile Drawer Sheet when "মেনু" is tapped */}
       {drawerOpen && (
-        <div className="no-print lg:hidden fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex flex-col justify-end">
+        <div className="no-print print:hidden lg:hidden fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex flex-col justify-end">
           <div className="bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-3">
@@ -711,7 +711,7 @@ export const MobileBottomNav: React.FC = () => {
       {/* Fixed 5-Tab Bar */}
       <nav
         aria-label="Mobile Bottom Navigation"
-        className="no-print lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 flex items-center justify-around px-2"
+        className="no-print print:hidden lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 flex items-center justify-around px-2"
       >
         {bottomTabs.map((tab) => (
           <button
@@ -752,7 +752,7 @@ export const DevRoleSwitcherPopover: React.FC = () => {
   if (!isSuperAdminSession || isFirebaseAuthenticated || !currentUser) return null;
 
   return (
-    <div className="no-print fixed bottom-20 lg:bottom-4 left-4 z-40">
+    <div className="no-print print:hidden fixed bottom-20 lg:bottom-4 left-4 z-40">
       <div className="relative">
         <button
           type="button"

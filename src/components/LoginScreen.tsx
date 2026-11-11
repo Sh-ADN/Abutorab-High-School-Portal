@@ -131,8 +131,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onBackToWebsite }) => 
                   </h2>
                   <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
                     Automatic Admin provisioning for{' '}
-                    <span className="font-mono text-slate-800 dark:text-slate-200">
-                      ananneyadebnath@gmail.com
+                    <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">
+                      SH (Shahadat Hossain), ADN (Ananneya Debnath)
                     </span>
                     . New faculty accounts default to active Teacher profiles with short initials.
                   </p>
@@ -192,7 +192,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onBackToWebsite }) => 
                   <span>Official Google Sign-In & Automatic Profile Linking</span>
                 </div>
                 <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Teachers signing in with their registered <span className="font-mono">@gmail.com</span> address are automatically matched to their school profile, preserving their <span className="font-mono">teacherCode</span>, Class Teacher role, and Subject Assignments. Super Admin (<span className="font-mono">ananneyadebnath@gmail.com</span>) retains full administrative control.
+                  Teachers signing in with their registered <span className="font-mono">@gmail.com</span> address are automatically matched to their school profile, preserving their <span className="font-mono">teacherCode</span>, Class Teacher role, and Subject Assignments. Super Admins (<span className="font-mono font-semibold text-teal-800 dark:text-teal-300">SH (Shahadat Hossain), ADN (Ananneya Debnath)</span>) retain full administrative control.
                 </p>
               </div>
             </div>

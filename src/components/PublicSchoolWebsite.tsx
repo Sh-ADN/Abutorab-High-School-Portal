@@ -2063,7 +2063,7 @@ export const PublicSchoolWebsite: React.FC<PublicSchoolWebsiteProps> = ({
                 <span>স্বয়ংক্রিয় প্রোফাইল ও ইমেইল ম্যাচিং</span>
               </div>
               <p className="leading-relaxed text-[11px] text-slate-500 dark:text-slate-400">
-                আপনার নিবন্ধিত <span className="font-mono">@gmail.com</span> দিয়ে সাইন-ইন করলে স্বয়ংক্রিয়ভাবে আপনার শিক্ষক কোড, শ্রেণি শিক্ষক রোল ও বিষয় বণ্টন যুক্ত হবে। সুপার অ্যাডমিন (<span className="font-mono">ananneyadebnath@gmail.com</span>) পূর্ণ নিয়ন্ত্রণ সংরক্ষণ করেন।
+                আপনার নিবন্ধিত <span className="font-mono">@gmail.com</span> দিয়ে সাইন-ইন করলে স্বয়ংক্রিয়ভাবে আপনার শিক্ষক কোড, শ্রেণি শিক্ষক রোল ও বিষয় বণ্টন যুক্ত হবে। সুপার অ্যাডমিন (<span className="font-mono font-semibold text-teal-800 dark:text-teal-300">SH (Shahadat Hossain), ADN (Ananneya Debnath)</span>) পূর্ণ নিয়ন্ত্রণ সংরক্ষণ করেন।
               </p>
             </div>
           </div>
